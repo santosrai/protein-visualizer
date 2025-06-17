@@ -1,0 +1,59 @@
+{
+  "proteins": [
+    {
+      "id": "2PGH",
+      "name": "Porcine Hemoglobin",
+      "description": "Aquomet porcine hemoglobin, an oxygen-carrying protein from pig blood. Shows quaternary structure with alpha and beta chains.",
+      "organism": "Sus scrofa (pig)",
+      "method": "X-RAY DIFFRACTION",
+      "resolution": "2.80 Å",
+      "file": "2PGH.pdb",
+      "size": "large",
+      "features": ["oxygen transport", "quaternary structure", "heme groups", "aquomet form"]
+    },
+    {
+      "id": "1CRN",
+      "name": "Crambin",
+      "description": "A small hydrophobic plant protein with 46 amino acids. Commonly used for X-ray crystallography method development.",
+      "organism": "Crambe abyssinica (abyssinian kale)",
+      "method": "X-RAY DIFFRACTION",
+      "resolution": "1.50 Å",
+      "file": "1CRN.pdb",
+      "size": "small",
+      "features": ["antifreeze activity", "hydrophobic protein"]
+    },
+    {
+      "id": "2PTC",
+      "name": "Bovine Pancreatic Trypsin Inhibitor",
+      "description": "A classic protein inhibitor with well-defined structure. Contains three disulfide bonds and is highly stable.",
+      "organism": "Bos taurus (cattle)",
+      "method": "X-RAY DIFFRACTION",
+      "resolution": "1.20 Å",
+      "file": "2PTC.pdb",
+      "size": "small",
+      "features": ["enzyme inhibitor", "disulfide bonds", "stable structure"]
+    },
+    {
+      "id": "1AKE",
+      "name": "Adenylate Kinase",
+      "description": "An enzyme that catalyzes the interconversion of adenine nucleotides. Shows significant conformational changes upon substrate binding.",
+      "organism": "Escherichia coli",
+      "method": "X-RAY DIFFRACTION",
+      "resolution": "2.00 Å",
+      "file": "1AKE.pdb",
+      "size": "medium",
+      "features": ["enzyme", "conformational flexibility", "ATP binding"]
+    },
+    {
+      "id": "4HHB",
+      "name": "Hemoglobin",
+      "description": "The oxygen-carrying protein in red blood cells. A classic example of quaternary protein structure with four subunits.",
+      "organism": "Homo sapiens (human)",
+      "method": "X-RAY DIFFRACTION",
+      "resolution": "1.74 Å",
+      "file": "4HHB.pdb",
+      "size": "large",
+      "features": ["oxygen transport", "quaternary structure", "heme groups", "allosteric protein"]
+    }
+  ]
+}
