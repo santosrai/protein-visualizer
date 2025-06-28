@@ -47,7 +47,7 @@ class GeminiService {
       }
 
       this.genAI = new GoogleGenerativeAI(apiKey.trim());
-      this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
+      this.model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       this.apiKey = apiKey.trim();
       console.log('Gemini AI initialized successfully');
     } catch (error) {
@@ -85,7 +85,7 @@ class GeminiService {
       }
 
       const testAI = new GoogleGenerativeAI(apiKey.trim());
-      const testModel = testAI.getGenerativeModel({ model: 'gemini-pro' });
+      const testModel = testAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
       
       const result = await testModel.generateContent('Hello, can you respond with just "OK"?');
       const response = await result.response;
