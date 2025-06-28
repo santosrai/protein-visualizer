@@ -234,8 +234,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return 'No plugin available';
 
       try {
+        // Check if the interactivity manager and loci are available
+        if (!pluginRef.current.managers?.interactivity?.loci) {
+          return 'Selection manager not initialized. Please load a structure first.';
+        }
+
         const selection = pluginRef.current.managers.interactivity.loci.entries;
-        if (selection.length === 0) {
+        if (!selection || selection.length === 0) {
           return 'No selection made. Click on the structure to select atoms or residues.';
         }
         
