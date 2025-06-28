@@ -191,8 +191,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   return (
-    <Card className={cn("h-full flex flex-col bg-gray-800/50 border-gray-700", className)}>
-      <CardHeader className="pb-3">
+    <Card className={cn("h-[600px] flex flex-col bg-gray-800/50 border-gray-700", className)}>
+      {/* Fixed Header */}
+      <CardHeader className="pb-3 flex-shrink-0">
         <CardTitle className="text-white flex items-center">
           <MessageCircle className="h-5 w-5 mr-2 text-blue-400" />
           AI Assistant
@@ -209,10 +210,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col p-4 space-y-4">
+      {/* Scrollable Content Area */}
+      <CardContent className="flex-1 flex flex-col p-4 space-y-4 min-h-0">
         {/* API Key Warning */}
         {apiKeyError && (
-          <Alert className="bg-yellow-500/10 border-yellow-500/30">
+          <Alert className="bg-yellow-500/10 border-yellow-500/30 flex-shrink-0">
             <AlertCircle className="h-4 w-4 text-yellow-400" />
             <AlertDescription className="text-yellow-300 text-sm">
               Add <code>VITE_GEMINI_API_KEY</code> to your environment variables to enable AI features.
@@ -221,7 +223,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         )}
 
         {/* Quick Commands */}
-        <div className="space-y-2">
+        <div className="space-y-2 flex-shrink-0">
           <div className="flex items-center space-x-2">
             <Zap className="h-4 w-4 text-green-400" />
             <span className="text-sm font-medium text-white">Quick Commands</span>
@@ -242,117 +244,121 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         </div>
 
-        <Separator className="bg-gray-600" />
+        <Separator className="bg-gray-600 flex-shrink-0" />
 
-        {/* Messages */}
-        <ScrollArea className="flex-1 pr-4">
-          <div className="space-y-4">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={cn(
-                  "flex space-x-3",
-                  message.type === 'user' ? 'justify-end' : 'justify-start'
-                )}
-              >
-                {message.type !== 'user' && (
-                  <div className="flex-shrink-0">
-                    {message.type === 'assistant' ? (
-                      <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
-                        <Bot className="h-4 w-4 text-white" />
-                      </div>
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">
-                        <Lightbulb className="h-4 w-4 text-white" />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className={cn(
-                  "max-w-[80%] rounded-lg p-3",
-                  message.type === 'user' 
-                    ? "bg-blue-600 text-white" 
-                    : message.type === 'assistant'
-                    ? "bg-gray-700/50 text-gray-100"
-                    : "bg-gray-600/50 text-gray-200"
-                )}>
-                  <div className="text-sm whitespace-pre-wrap">
-                    {message.content}
-                  </div>
-                  
-                  {message.commands && message.commands.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {message.commands.map((cmd, index) => (
-                        <Badge 
-                          key={index}
-                          variant="secondary" 
-                          className="text-xs bg-blue-500/20 text-blue-300 border-blue-500/30"
-                        >
-                          {cmd}
-                        </Badge>
-                      ))}
+        {/* Fixed Height Messages Area with Scrolling */}
+        <div className="flex-1 min-h-0">
+          <ScrollArea className="h-full pr-2">
+            <div className="space-y-4 pb-4">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={cn(
+                    "flex space-x-3",
+                    message.type === 'user' ? 'justify-end' : 'justify-start'
+                  )}
+                >
+                  {message.type !== 'user' && (
+                    <div className="flex-shrink-0">
+                      {message.type === 'assistant' ? (
+                        <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                          <Bot className="h-4 w-4 text-white" />
+                        </div>
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">
+                          <Lightbulb className="h-4 w-4 text-white" />
+                        </div>
+                      )}
                     </div>
                   )}
-                  
-                  <div className="text-xs opacity-70 mt-1">
-                    {formatTime(message.timestamp)}
-                  </div>
-                </div>
 
-                {message.type === 'user' && (
-                  <div className="flex-shrink-0">
-                    <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center">
-                      <User className="h-4 w-4 text-white" />
+                  <div className={cn(
+                    "max-w-[80%] rounded-lg p-3",
+                    message.type === 'user' 
+                      ? "bg-blue-600 text-white" 
+                      : message.type === 'assistant'
+                      ? "bg-gray-700/50 text-gray-100"
+                      : "bg-gray-600/50 text-gray-200"
+                  )}>
+                    <div className="text-sm whitespace-pre-wrap leading-relaxed">
+                      {message.content}
+                    </div>
+                    
+                    {message.commands && message.commands.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {message.commands.map((cmd, index) => (
+                          <Badge 
+                            key={index}
+                            variant="secondary" 
+                            className="text-xs bg-blue-500/20 text-blue-300 border-blue-500/30"
+                          >
+                            {cmd}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    
+                    <div className="text-xs opacity-70 mt-1">
+                      {formatTime(message.timestamp)}
                     </div>
                   </div>
-                )}
-              </div>
-            ))}
-            
-            {isLoading && (
-              <div className="flex space-x-3 justify-start">
-                <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
-                  <Bot className="h-4 w-4 text-white" />
+
+                  {message.type === 'user' && (
+                    <div className="flex-shrink-0">
+                      <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center">
+                        <User className="h-4 w-4 text-white" />
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="bg-gray-700/50 rounded-lg p-3">
-                  <div className="flex items-center space-x-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                    <span className="text-sm text-gray-400">Thinking...</span>
+              ))}
+              
+              {isLoading && (
+                <div className="flex space-x-3 justify-start">
+                  <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                    <Bot className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="bg-gray-700/50 rounded-lg p-3">
+                    <div className="flex items-center space-x-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                      <span className="text-sm text-gray-400">Thinking...</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-            
-            <div ref={messagesEndRef} />
-          </div>
-        </ScrollArea>
-
-        {/* Input */}
-        <div className="flex space-x-2">
-          <Input
-            ref={inputRef}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder={isStructureLoaded ? "Ask me about the protein structure..." : "Load a structure first..."}
-            className="flex-1 bg-gray-900/50 border-gray-600 text-white placeholder-gray-400"
-            disabled={isLoading || !isStructureLoaded}
-          />
-          <Button
-            onClick={handleSendMessage}
-            disabled={!inputValue.trim() || isLoading || !isStructureLoaded}
-            className="bg-blue-600 hover:bg-blue-700 text-white"
-          >
-            <Send className="h-4 w-4" />
-          </Button>
+              )}
+              
+              <div ref={messagesEndRef} />
+            </div>
+          </ScrollArea>
         </div>
 
-        {!isStructureLoaded && (
-          <div className="text-center text-sm text-gray-400">
-            Load a protein structure to start chatting with the AI assistant
+        {/* Fixed Input Area */}
+        <div className="flex-shrink-0 space-y-2">
+          <div className="flex space-x-2">
+            <Input
+              ref={inputRef}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder={isStructureLoaded ? "Ask me about the protein structure..." : "Load a structure first..."}
+              className="flex-1 bg-gray-900/50 border-gray-600 text-white placeholder-gray-400"
+              disabled={isLoading || !isStructureLoaded}
+            />
+            <Button
+              onClick={handleSendMessage}
+              disabled={!inputValue.trim() || isLoading || !isStructureLoaded}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-3"
+            >
+              <Send className="h-4 w-4" />
+            </Button>
           </div>
-        )}
+
+          {!isStructureLoaded && (
+            <div className="text-center text-xs text-gray-400">
+              Load a protein structure to start chatting with the AI assistant
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
