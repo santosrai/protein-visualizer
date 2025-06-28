@@ -229,25 +229,53 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // Get selection information
+    // Get selection information - Fixed implementation
     const getSelectionInfo = useCallback(async (): Promise<string> => {
       if (!pluginRef.current) return 'No plugin available';
 
       try {
-        // Check if the interactivity manager and loci are available
-        if (!pluginRef.current.managers?.interactivity?.loci) {
-          return 'Selection manager not initialized. Please load a structure first.';
+        // Check if there are any structures loaded
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        if (structures.length === 0) {
+          return 'No structure loaded. Please load a protein structure first.';
         }
 
-        const selection = pluginRef.current.managers.interactivity.loci.entries;
+        // Check if the selection manager exists
+        if (!pluginRef.current.managers || !pluginRef.current.managers.structure) {
+          return 'Selection manager not available. Please ensure the structure is fully loaded.';
+        }
+
+        // Get current selection from the structure selection manager
+        const selection = pluginRef.current.managers.structure.selection.entries;
+        
         if (!selection || selection.length === 0) {
-          return 'No selection made. Click on the structure to select atoms or residues.';
+          return 'No atoms or residues are currently selected. Click on the protein structure to make a selection, then ask again.';
+        }
+
+        // Get selection details
+        let selectionInfo = `Current selection contains ${selection.length} item(s):\n\n`;
+        
+        for (let i = 0; i < Math.min(selection.length, 5); i++) {
+          const entry = selection[i];
+          if (entry && entry.selection) {
+            selectionInfo += `• Selection ${i + 1}: Structure element\n`;
+          }
         }
         
-        return `Selected ${selection.length} element(s). Use the selection tools to explore further.`;
+        if (selection.length > 5) {
+          selectionInfo += `... and ${selection.length - 5} more items`;
+        }
+
+        return selectionInfo;
       } catch (error) {
         console.error('Failed to get selection info:', error);
-        return 'Failed to get selection information.';
+        
+        // Fallback: Check if user can make selections
+        if (pluginRef.current && pluginRef.current.canvas3d) {
+          return 'Selection system is ready. Click on atoms or residues in the 3D viewer to select them, then ask for selection info again.';
+        }
+        
+        return 'Unable to access selection information. Please ensure a structure is loaded and try clicking on the protein to select parts of it.';
       }
     }, []);
 
@@ -297,8 +325,30 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return 'No structure loaded.';
         }
 
-        // Basic structure information
-        return 'Structure information: Protein structure loaded with multiple chains and residues.';
+        // Try to get basic structure information
+        const structure = structures[0];
+        if (structure && structure.obj && structure.obj.data) {
+          const data = structure.obj.data;
+          
+          let info = 'Structure Information:\n\n';
+          
+          // Get basic stats
+          if (data.atomicHierarchy) {
+            const hierarchy = data.atomicHierarchy;
+            info += `• Total atoms: ${hierarchy.atoms._rowCount || 'Unknown'}\n`;
+            info += `• Total residues: ${hierarchy.residues._rowCount || 'Unknown'}\n`;
+            info += `• Total chains: ${hierarchy.chains._rowCount || 'Unknown'}\n`;
+          }
+          
+          // Get model information
+          if (data.models && data.models.length > 0) {
+            info += `• Models: ${data.models.length}\n`;
+          }
+          
+          return info;
+        }
+
+        return 'Structure is loaded but detailed information is not available.';
       } catch (error) {
         console.error('Failed to get structure info:', error);
         return 'Failed to get structure information.';
