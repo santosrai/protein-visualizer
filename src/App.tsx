@@ -1,5 +1,6 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import MolstarViewer, { ViewerControls } from './components/MolstarViewer';
+import ChatInterface from './components/ChatInterface';
 import ProteinSelector from './components/ProteinSelector';
 import FileUploader from './components/FileUploader';
 import ControlPanel from './components/ControlPanel';
@@ -136,7 +137,7 @@ function App() {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-white">Protein Visualizer</h1>
-                <p className="text-gray-400 text-sm">Advanced 3D Molecular Visualization</p>
+                <p className="text-gray-400 text-sm">Advanced 3D Molecular Visualization with AI Assistant</p>
               </div>
             </div>
             <div className="flex items-center space-x-3">
@@ -157,10 +158,10 @@ function App() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-140px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-140px)]">
           
           {/* Left Panel - Controls */}
-          <div className="lg:col-span-1 space-y-4 overflow-y-auto">
+          <div className="lg:col-span-3 space-y-4 overflow-y-auto">
             
             {/* Current Structure Info */}
             {isStructureLoaded && (
@@ -223,7 +224,7 @@ function App() {
           </div>
 
           {/* Main Viewer */}
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-6">
             <Card className="h-full bg-gray-800/30 border-gray-700">
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
@@ -271,18 +272,28 @@ function App() {
                       </h3>
                       <p className="text-gray-400 mb-4 max-w-md">
                         Load a sample protein or upload your own PDB file to start exploring 
-                        3D molecular structures with advanced visualization tools.
+                        3D molecular structures with advanced visualization tools and AI assistance.
                       </p>
                       <div className="flex items-center justify-center space-x-2 text-sm text-gray-500">
                         <span>Powered by</span>
                         <ExternalLink className="h-4 w-4" />
-                        <span>Molstar</span>
+                        <span>Molstar + Gemini AI</span>
                       </div>
                     </div>
                   </div>
                 )}
               </CardContent>
             </Card>
+          </div>
+
+          {/* Right Panel - AI Chat */}
+          <div className="lg:col-span-3">
+            <ChatInterface
+              viewerRef={viewerRef}
+              currentStructure={currentStructureName}
+              currentRepresentation={currentRepresentation}
+              isStructureLoaded={isStructureLoaded}
+            />
           </div>
         </div>
       </main>
@@ -294,7 +305,7 @@ function App() {
             <div className="flex items-center space-x-4">
               <span>© 2025 Protein Visualizer</span>
               <Separator orientation="vertical" className="h-4 bg-gray-600" />
-              <span>Built with React + Molstar</span>
+              <span>Built with React + Molstar + Gemini AI</span>
             </div>
             <div className="flex items-center space-x-4">
               <a
@@ -305,6 +316,15 @@ function App() {
               >
                 <ExternalLink className="h-3 w-3 mr-1" />
                 Molstar
+              </a>
+              <a
+                href="https://ai.google.dev/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-white transition-colors flex items-center"
+              >
+                <ExternalLink className="h-3 w-3 mr-1" />
+                Gemini AI
               </a>
               <a
                 href="https://www.rcsb.org/"
