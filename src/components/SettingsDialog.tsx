@@ -22,7 +22,9 @@ import {
   Eye,
   EyeOff,
   Save,
-  Trash2
+  Trash2,
+  Copy,
+  Check
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { geminiService } from '../services/geminiService';
@@ -38,19 +40,24 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 }) => {
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
-  const [isValid, setIsValid] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [testError, setTestError] = useState<string>('');
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  // Load saved API key on component mount
+  // Load saved API key on component mount and when dialog opens
   useEffect(() => {
-    const savedKey = localStorage.getItem('gemini_api_key');
-    if (savedKey) {
-      setApiKey(savedKey);
-      setIsValid(true);
+    if (open) {
+      const savedKey = localStorage.getItem('gemini_api_key');
+      if (savedKey) {
+        setApiKey(savedKey);
+      }
+      setTestResult(null);
+      setTestError('');
     }
-  }, []);
+  }, [open]);
 
   // Default trigger component
   const defaultTrigger = (
@@ -60,26 +67,46 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
     </Button>
   );
 
-  const handleSaveApiKey = () => {
-    if (apiKey.trim()) {
-      localStorage.setItem('gemini_api_key', apiKey.trim());
-      geminiService.updateApiKey(apiKey.trim());
-      setIsValid(true);
-      onApiKeyUpdate?.(true);
-    } else {
-      localStorage.removeItem('gemini_api_key');
-      geminiService.updateApiKey('');
-      setIsValid(false);
-      onApiKeyUpdate?.(false);
+  const getApiKeyStatus = () => {
+    const status = geminiService.getApiKeyStatus();
+    return status;
+  };
+
+  const handleSaveApiKey = async () => {
+    const trimmedKey = apiKey.trim();
+    
+    setIsSaving(true);
+    setTestResult(null);
+    setTestError('');
+
+    try {
+      if (trimmedKey) {
+        // Test the API key first
+        await geminiService.testApiKey(trimmedKey);
+        
+        // If test passes, save it
+        geminiService.updateApiKey(trimmedKey);
+        setTestResult('success');
+        onApiKeyUpdate?.(true);
+      } else {
+        // Clear the API key
+        geminiService.updateApiKey('');
+        setTestResult(null);
+        onApiKeyUpdate?.(false);
+      }
+    } catch (error) {
+      setTestResult('error');
+      setTestError(error instanceof Error ? error.message : 'Failed to validate API key');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleClearApiKey = () => {
     setApiKey('');
-    localStorage.removeItem('gemini_api_key');
     geminiService.updateApiKey('');
-    setIsValid(false);
     setTestResult(null);
+    setTestError('');
     onApiKeyUpdate?.(false);
   };
 
@@ -88,23 +115,34 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
 
     setIsTesting(true);
     setTestResult(null);
+    setTestError('');
 
     try {
-      // Test the API key with a simple request
       await geminiService.testApiKey(apiKey.trim());
       setTestResult('success');
+      setTestError('');
     } catch (error) {
       setTestResult('error');
+      setTestError(error instanceof Error ? error.message : 'API key test failed');
     } finally {
       setIsTesting(false);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !isSaving && !isTesting) {
       handleSaveApiKey();
     }
   };
+
+  const copyExampleKey = () => {
+    const exampleKey = 'AIzaSyDc9QtR_example_gemini_api_key_here';
+    navigator.clipboard.writeText(exampleKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const status = getApiKeyStatus();
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -138,15 +176,20 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
               {/* Current Status */}
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-400">Status:</span>
-                {isValid ? (
+                {status.isValid ? (
                   <div className="flex items-center space-x-2">
                     <CheckCircle className="h-4 w-4 text-green-400" />
-                    <span className="text-sm text-green-400">API Key Configured</span>
+                    <span className="text-sm text-green-400">API Key Valid ({status.source})</span>
+                  </div>
+                ) : status.hasKey ? (
+                  <div className="flex items-center space-x-2">
+                    <AlertCircle className="h-4 w-4 text-yellow-400" />
+                    <span className="text-sm text-yellow-400">API Key Invalid ({status.source})</span>
                   </div>
                 ) : (
                   <div className="flex items-center space-x-2">
-                    <AlertCircle className="h-4 w-4 text-yellow-400" />
-                    <span className="text-sm text-yellow-400">No API Key</span>
+                    <AlertCircle className="h-4 w-4 text-red-400" />
+                    <span className="text-sm text-red-400">No API Key</span>
                   </div>
                 )}
               </div>
@@ -163,7 +206,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     onKeyPress={handleKeyPress}
-                    placeholder="Enter your Gemini API key..."
+                    placeholder="AIzaSyDc9QtR_your_gemini_api_key_here"
                     className="bg-gray-900/50 border-gray-600 text-white placeholder-gray-400 pr-10"
                   />
                   <Button
@@ -180,21 +223,34 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     )}
                   </Button>
                 </div>
+                <p className="text-xs text-gray-400">
+                  API keys should start with "AIza" and be at least 35 characters long
+                </p>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex space-x-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={handleSaveApiKey}
-                  disabled={!apiKey.trim()}
+                  disabled={!apiKey.trim() || isSaving || isTesting}
                   className="bg-blue-600 hover:bg-blue-700 text-white"
                 >
-                  <Save className="h-4 w-4 mr-2" />
-                  Save API Key
+                  {isSaving ? (
+                    <>
+                      <div className="h-4 w-4 mr-2 animate-spin rounded-full border-2 border-gray-400 border-t-white" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Save & Test
+                    </>
+                  )}
                 </Button>
+                
                 <Button
                   onClick={handleTestApiKey}
-                  disabled={!apiKey.trim() || isTesting}
+                  disabled={!apiKey.trim() || isTesting || isSaving}
                   variant="outline"
                   className="bg-gray-700/50 border-gray-600 text-white hover:bg-gray-600"
                 >
@@ -206,15 +262,17 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                   ) : (
                     <>
                       <CheckCircle className="h-4 w-4 mr-2" />
-                      Test API Key
+                      Test Only
                     </>
                   )}
                 </Button>
-                {isValid && (
+                
+                {status.hasKey && (
                   <Button
                     onClick={handleClearApiKey}
                     variant="outline"
                     className="bg-red-500/20 border-red-500/50 text-red-400 hover:bg-red-500/30"
+                    disabled={isSaving || isTesting}
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
                     Clear
@@ -238,8 +296,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
                     testResult === 'success' ? "text-green-300" : "text-red-300"
                   )}>
                     {testResult === 'success' 
-                      ? "API key is valid and working correctly!"
-                      : "API key test failed. Please check your key and try again."
+                      ? "✅ API key is valid and working correctly!"
+                      : `❌ ${testError || 'API key test failed'}`
                     }
                   </AlertDescription>
                 </Alert>
@@ -251,21 +309,38 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({
               <div className="space-y-3">
                 <h4 className="text-sm font-medium text-white">How to get your API key:</h4>
                 <ol className="text-sm text-gray-400 space-y-1 list-decimal list-inside">
-                  <li>Visit Google AI Studio</li>
+                  <li>Visit Google AI Studio (link below)</li>
                   <li>Sign in with your Google account</li>
-                  <li>Create a new API key</li>
-                  <li>Copy and paste it above</li>
+                  <li>Click "Get API key" → "Create API key"</li>
+                  <li>Copy the key (starts with "AIza")</li>
+                  <li>Paste it above and click "Save & Test"</li>
                 </ol>
                 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => window.open('https://ai.google.dev/', '_blank')}
-                  className="bg-gray-700/50 border-gray-600 text-white hover:bg-gray-600"
-                >
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Get API Key
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open('https://ai.google.dev/', '_blank')}
+                    className="bg-gray-700/50 border-gray-600 text-white hover:bg-gray-600"
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    Get API Key
+                  </Button>
+                  
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={copyExampleKey}
+                    className="bg-gray-700/50 border-gray-600 text-white hover:bg-gray-600"
+                  >
+                    {copied ? (
+                      <Check className="h-4 w-4 mr-2" />
+                    ) : (
+                      <Copy className="h-4 w-4 mr-2" />
+                    )}
+                    {copied ? 'Copied!' : 'Copy Example'}
+                  </Button>
+                </div>
               </div>
 
               {/* Security Notice */}

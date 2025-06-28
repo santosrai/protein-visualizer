@@ -4,53 +4,120 @@ class GeminiService {
   private genAI: GoogleGenerativeAI | null = null;
   private model: any = null;
   private apiKey: string = '';
+  private listeners: Array<(hasKey: boolean) => void> = [];
 
   constructor() {
+    this.refreshApiKey();
+  }
+
+  // Add listener for API key changes
+  addListener(listener: (hasKey: boolean) => void) {
+    this.listeners.push(listener);
+  }
+
+  removeListener(listener: (hasKey: boolean) => void) {
+    this.listeners = this.listeners.filter(l => l !== listener);
+  }
+
+  private notifyListeners() {
+    const hasKey = this.isConfigured();
+    this.listeners.forEach(listener => listener(hasKey));
+  }
+
+  private refreshApiKey() {
     // Check localStorage first, then environment variables
-    this.apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
-    if (this.apiKey) {
-      this.initializeAI(this.apiKey);
-    }
-  }
-
-  private initializeAI(apiKey: string) {
-    try {
-      this.genAI = new GoogleGenerativeAI(apiKey);
-      this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
-      this.apiKey = apiKey;
-    } catch (error) {
-      console.error('Failed to initialize Gemini AI:', error);
-      this.genAI = null;
-      this.model = null;
-    }
-  }
-
-  updateApiKey(apiKey: string) {
-    if (apiKey) {
-      this.initializeAI(apiKey);
-    } else {
+    const savedKey = localStorage.getItem('gemini_api_key');
+    const envKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const newApiKey = savedKey || envKey || '';
+    
+    if (newApiKey && newApiKey !== this.apiKey) {
+      this.initializeAI(newApiKey);
+    } else if (!newApiKey) {
       this.genAI = null;
       this.model = null;
       this.apiKey = '';
     }
   }
 
+  private initializeAI(apiKey: string) {
+    try {
+      // Validate API key format (Gemini keys typically start with 'AIza')
+      if (!apiKey.startsWith('AIza') || apiKey.length < 35) {
+        throw new Error('Invalid API key format');
+      }
+
+      this.genAI = new GoogleGenerativeAI(apiKey.trim());
+      this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
+      this.apiKey = apiKey.trim();
+      console.log('Gemini AI initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize Gemini AI:', error);
+      this.genAI = null;
+      this.model = null;
+      this.apiKey = '';
+      throw error;
+    }
+  }
+
+  updateApiKey(apiKey: string) {
+    try {
+      if (apiKey && apiKey.trim()) {
+        this.initializeAI(apiKey.trim());
+        localStorage.setItem('gemini_api_key', apiKey.trim());
+      } else {
+        this.genAI = null;
+        this.model = null;
+        this.apiKey = '';
+        localStorage.removeItem('gemini_api_key');
+      }
+      this.notifyListeners();
+    } catch (error) {
+      this.notifyListeners();
+      throw error;
+    }
+  }
+
   async testApiKey(apiKey: string): Promise<boolean> {
     try {
-      const testAI = new GoogleGenerativeAI(apiKey);
+      // Validate format first
+      if (!apiKey.startsWith('AIza') || apiKey.length < 35) {
+        throw new Error('Invalid API key format. Gemini API keys should start with "AIza"');
+      }
+
+      const testAI = new GoogleGenerativeAI(apiKey.trim());
       const testModel = testAI.getGenerativeModel({ model: 'gemini-pro' });
       
-      const result = await testModel.generateContent('Test connection');
+      const result = await testModel.generateContent('Hello, can you respond with just "OK"?');
       const response = await result.response;
-      return !!response.text();
+      const text = response.text();
+      
+      return text && text.length > 0;
     } catch (error) {
       console.error('API key test failed:', error);
-      throw new Error('Invalid API key or network error');
+      if (error instanceof Error) {
+        if (error.message.includes('API_KEY_INVALID') || error.message.includes('Invalid API key')) {
+          throw new Error('Invalid API key. Please check your Gemini API key.');
+        } else if (error.message.includes('format')) {
+          throw error;
+        }
+      }
+      throw new Error('Failed to connect to Gemini API. Please check your internet connection and API key.');
     }
   }
 
   isConfigured(): boolean {
-    return !!this.model && !!this.apiKey;
+    return !!this.model && !!this.apiKey && this.apiKey.length > 0;
+  }
+
+  getApiKeyStatus(): { hasKey: boolean; isValid: boolean; source: string } {
+    const savedKey = localStorage.getItem('gemini_api_key');
+    const envKey = import.meta.env.VITE_GEMINI_API_KEY;
+    
+    return {
+      hasKey: !!(savedKey || envKey),
+      isValid: this.isConfigured(),
+      source: savedKey ? 'localStorage' : envKey ? 'environment' : 'none'
+    };
   }
 
   async processCommand(message: string, context: any = {}) {
@@ -90,8 +157,14 @@ User message: ${message}`;
       return response.text();
     } catch (error) {
       console.error('Gemini API error:', error);
-      if (error instanceof Error && error.message.includes('API_KEY_INVALID')) {
-        throw new Error('Invalid API key. Please check your Gemini API key in Settings.');
+      if (error instanceof Error) {
+        if (error.message.includes('API_KEY_INVALID') || error.message.includes('401')) {
+          throw new Error('Invalid API key. Please check your Gemini API key in Settings.');
+        } else if (error.message.includes('QUOTA_EXCEEDED')) {
+          throw new Error('API quota exceeded. Please check your Gemini API usage limits.');
+        } else if (error.message.includes('RATE_LIMIT_EXCEEDED')) {
+          throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+        }
       }
       throw new Error('Failed to process command with AI. Please try again.');
     }

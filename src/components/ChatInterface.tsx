@@ -15,7 +15,9 @@ import {
   AlertCircle,
   Lightbulb,
   Zap,
-  Settings
+  Settings,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { geminiService } from '../services/geminiService';
@@ -65,14 +67,32 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [apiKeyError, setApiKeyError] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [apiKeyStatus, setApiKeyStatus] = useState({ hasKey: false, isValid: false, source: 'none' });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Check for API key on mount and when service changes
+  // Check API key status
+  const updateApiKeyStatus = () => {
+    const status = geminiService.getApiKeyStatus();
+    setApiKeyStatus(status);
+    setHasApiKey(status.isValid);
+  };
+
+  // Set up API key listener
   useEffect(() => {
-    setHasApiKey(geminiService.isConfigured());
+    updateApiKeyStatus();
+
+    const listener = (hasKey: boolean) => {
+      setHasApiKey(hasKey);
+      updateApiKeyStatus();
+    };
+
+    geminiService.addListener(listener);
+
+    return () => {
+      geminiService.removeListener(listener);
+    };
   }, []);
 
   // Set up command processor with viewer
@@ -98,7 +118,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const handleApiKeyUpdate = (hasKey: boolean) => {
     setHasApiKey(hasKey);
-    setApiKeyError(false);
+    updateApiKeyStatus();
+    
+    if (hasKey) {
+      addMessage({
+        type: 'system',
+        content: 'Great! AI assistant is now ready. You can ask me questions about the protein structure or request specific visualizations.'
+      });
+    }
   };
 
   const handleSendMessage = async () => {
@@ -113,10 +140,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     setInputValue('');
     setIsLoading(true);
-    setApiKeyError(false);
 
     try {
-      // Check if it's a direct command
+      // Check if it's a direct command first
       const directCommand = molstarCommandProcessor.parseCommand(message.toLowerCase());
       
       if (directCommand) {
@@ -131,7 +157,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           content: result,
           commands: [directCommand.command]
         });
-      } else if (hasApiKey) {
+      } else if (hasApiKey && apiKeyStatus.isValid) {
         // Process with AI
         const context = {
           structureName: currentStructure,
@@ -139,56 +165,57 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           hasStructure: isStructureLoaded
         };
 
-        const aiResponse = await geminiService.processCommand(message, context);
-        const commands = geminiService.extractCommands(aiResponse);
-        const cleanResponse = geminiService.cleanResponse(aiResponse);
+        try {
+          const aiResponse = await geminiService.processCommand(message, context);
+          const commands = geminiService.extractCommands(aiResponse);
+          const cleanResponse = geminiService.cleanResponse(aiResponse);
 
-        // Execute any commands found in the AI response
-        const commandResults = [];
-        for (const command of commands) {
-          const parsedCommand = molstarCommandProcessor.parseCommand(command);
-          if (parsedCommand) {
-            const result = await molstarCommandProcessor.executeCommand(
-              parsedCommand.command,
-              parsedCommand.params
-            );
-            commandResults.push(result);
+          // Execute any commands found in the AI response
+          const commandResults = [];
+          for (const command of commands) {
+            const parsedCommand = molstarCommandProcessor.parseCommand(command);
+            if (parsedCommand) {
+              const result = await molstarCommandProcessor.executeCommand(
+                parsedCommand.command,
+                parsedCommand.params
+              );
+              commandResults.push(result);
+            }
           }
-        }
 
-        // Combine AI response with command results
-        let finalResponse = cleanResponse;
-        if (commandResults.length > 0) {
-          finalResponse += '\n\n' + commandResults.join('\n');
-        }
+          // Combine AI response with command results
+          let finalResponse = cleanResponse;
+          if (commandResults.length > 0) {
+            finalResponse += '\n\n' + commandResults.join('\n');
+          }
 
-        addMessage({
-          type: 'assistant',
-          content: finalResponse,
-          commands: commands
-        });
+          addMessage({
+            type: 'assistant',
+            content: finalResponse,
+            commands: commands
+          });
+        } catch (error) {
+          console.error('AI processing error:', error);
+          addMessage({
+            type: 'system',
+            content: error instanceof Error ? error.message : 'Failed to process AI request. You can still use direct commands like "reset_view" or "switch_to_surface".'
+          });
+        }
       } else {
-        // No API key available, suggest configuration
-        setApiKeyError(true);
+        // No valid API key, suggest configuration or direct commands
         addMessage({
           type: 'system',
-          content: 'AI features require a Gemini API key. Please configure it in Settings, or use direct commands like "reset_view" or "switch_to_surface".'
+          content: apiKeyStatus.hasKey 
+            ? 'AI features require a valid Gemini API key. Please check your API key in Settings, or use direct commands like "reset_view" or "switch_to_surface".'
+            : 'AI features require a Gemini API key. Please configure it in Settings, or use direct commands like "reset_view" or "switch_to_surface".'
         });
       }
     } catch (error) {
       console.error('Chat error:', error);
-      if (error instanceof Error && error.message.includes('API key')) {
-        setApiKeyError(true);
-        addMessage({
-          type: 'system',
-          content: 'AI features require a valid Gemini API key. Please check your API key in Settings.'
-        });
-      } else {
-        addMessage({
-          type: 'system',
-          content: 'Sorry, I encountered an error. Please try again or use direct commands.'
-        });
-      }
+      addMessage({
+        type: 'system',
+        content: 'Sorry, I encountered an error. Please try again or use direct commands like "reset_view" or "switch_to_surface".'
+      });
     } finally {
       setIsLoading(false);
     }
@@ -228,31 +255,62 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             }
           />
         </div>
-        {currentStructure && (
-          <div className="flex items-center space-x-2">
+        
+        <div className="flex items-center space-x-2 flex-wrap gap-1">
+          {currentStructure && (
             <Badge variant="outline" className="text-xs bg-gray-700/50 text-gray-300 border-gray-600">
               {currentStructure}
             </Badge>
+          )}
+          {currentRepresentation && (
             <Badge variant="outline" className="text-xs bg-gray-700/50 text-gray-300 border-gray-600">
               {currentRepresentation}
             </Badge>
-            {hasApiKey && (
-              <Badge variant="outline" className="text-xs bg-green-500/20 text-green-300 border-green-500/30">
-                AI Ready
-              </Badge>
+          )}
+          
+          {/* API Status Badge */}
+          <Badge 
+            variant="outline" 
+            className={cn(
+              "text-xs",
+              hasApiKey && apiKeyStatus.isValid
+                ? "bg-green-500/20 text-green-300 border-green-500/30"
+                : apiKeyStatus.hasKey
+                ? "bg-yellow-500/20 text-yellow-300 border-yellow-500/30"
+                : "bg-red-500/20 text-red-300 border-red-500/30"
             )}
-          </div>
-        )}
+          >
+            {hasApiKey && apiKeyStatus.isValid ? (
+              <>
+                <Wifi className="h-3 w-3 mr-1" />
+                AI Ready
+              </>
+            ) : apiKeyStatus.hasKey ? (
+              <>
+                <WifiOff className="h-3 w-3 mr-1" />
+                AI Key Invalid
+              </>
+            ) : (
+              <>
+                <WifiOff className="h-3 w-3 mr-1" />
+                No AI Key
+              </>
+            )}
+          </Badge>
+        </div>
       </CardHeader>
 
       {/* Scrollable Content Area */}
       <CardContent className="flex-1 flex flex-col p-4 space-y-4 min-h-0">
         {/* API Key Warning */}
-        {apiKeyError && (
-          <Alert className="bg-yellow-500/10 border-yellow-500/30 flex-shrink-0">
-            <AlertCircle className="h-4 w-4 text-yellow-400" />
-            <AlertDescription className="text-yellow-300 text-sm">
-              Configure your Gemini API key in Settings to enable AI features.
+        {!hasApiKey && (
+          <Alert className="bg-blue-500/10 border-blue-500/30 flex-shrink-0">
+            <AlertCircle className="h-4 w-4 text-blue-400" />
+            <AlertDescription className="text-blue-300 text-sm">
+              {apiKeyStatus.hasKey 
+                ? "Your API key appears to be invalid. Please check it in Settings."
+                : "Configure your Gemini API key in Settings to enable AI features, or use direct commands below."
+              }
             </AlertDescription>
           </Alert>
         )}
@@ -356,7 +414,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   <div className="bg-gray-700/50 rounded-lg p-3">
                     <div className="flex items-center space-x-2">
                       <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                      <span className="text-sm text-gray-400">Thinking...</span>
+                      <span className="text-sm text-gray-400">
+                        {hasApiKey ? 'Processing with AI...' : 'Processing command...'}
+                      </span>
                     </div>
                   </div>
                 </div>
