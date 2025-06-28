@@ -14,12 +14,14 @@ import {
   Loader2, 
   AlertCircle,
   Lightbulb,
-  Zap
+  Zap,
+  Settings
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { geminiService } from '../services/geminiService';
 import { molstarCommandProcessor } from '../services/molstarCommandProcessor';
 import { ViewerControls } from './MolstarViewer';
+import SettingsDialog from './SettingsDialog';
 
 interface ChatMessage {
   id: string;
@@ -64,8 +66,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [apiKeyError, setApiKeyError] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Check for API key on mount and when service changes
+  useEffect(() => {
+    setHasApiKey(geminiService.isConfigured());
+  }, []);
 
   // Set up command processor with viewer
   useEffect(() => {
@@ -86,6 +94,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       timestamp: new Date()
     };
     setMessages(prev => [...prev, newMessage]);
+  };
+
+  const handleApiKeyUpdate = (hasKey: boolean) => {
+    setHasApiKey(hasKey);
+    setApiKeyError(false);
   };
 
   const handleSendMessage = async () => {
@@ -118,7 +131,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           content: result,
           commands: [directCommand.command]
         });
-      } else {
+      } else if (hasApiKey) {
         // Process with AI
         const context = {
           structureName: currentStructure,
@@ -154,6 +167,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           content: finalResponse,
           commands: commands
         });
+      } else {
+        // No API key available, suggest configuration
+        setApiKeyError(true);
+        addMessage({
+          type: 'system',
+          content: 'AI features require a Gemini API key. Please configure it in Settings, or use direct commands like "reset_view" or "switch_to_surface".'
+        });
       }
     } catch (error) {
       console.error('Chat error:', error);
@@ -161,7 +181,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         setApiKeyError(true);
         addMessage({
           type: 'system',
-          content: 'AI features require a Gemini API key. You can still use direct commands like "reset_view" or "switch_to_surface".'
+          content: 'AI features require a valid Gemini API key. Please check your API key in Settings.'
         });
       } else {
         addMessage({
@@ -194,10 +214,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     <Card className={cn("h-[600px] flex flex-col bg-gray-800/50 border-gray-700", className)}>
       {/* Fixed Header */}
       <CardHeader className="pb-3 flex-shrink-0">
-        <CardTitle className="text-white flex items-center">
-          <MessageCircle className="h-5 w-5 mr-2 text-blue-400" />
-          AI Assistant
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-white flex items-center">
+            <MessageCircle className="h-5 w-5 mr-2 text-blue-400" />
+            AI Assistant
+          </CardTitle>
+          <SettingsDialog 
+            onApiKeyUpdate={handleApiKeyUpdate}
+            trigger={
+              <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white hover:bg-gray-700">
+                <Settings className="h-4 w-4" />
+              </Button>
+            }
+          />
+        </div>
         {currentStructure && (
           <div className="flex items-center space-x-2">
             <Badge variant="outline" className="text-xs bg-gray-700/50 text-gray-300 border-gray-600">
@@ -206,6 +236,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <Badge variant="outline" className="text-xs bg-gray-700/50 text-gray-300 border-gray-600">
               {currentRepresentation}
             </Badge>
+            {hasApiKey && (
+              <Badge variant="outline" className="text-xs bg-green-500/20 text-green-300 border-green-500/30">
+                AI Ready
+              </Badge>
+            )}
           </div>
         )}
       </CardHeader>
@@ -217,7 +252,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <Alert className="bg-yellow-500/10 border-yellow-500/30 flex-shrink-0">
             <AlertCircle className="h-4 w-4 text-yellow-400" />
             <AlertDescription className="text-yellow-300 text-sm">
-              Add <code>VITE_GEMINI_API_KEY</code> to your environment variables to enable AI features.
+              Configure your Gemini API key in Settings to enable AI features.
             </AlertDescription>
           </Alert>
         )}

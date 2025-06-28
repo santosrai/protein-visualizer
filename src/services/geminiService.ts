@@ -3,19 +3,59 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 class GeminiService {
   private genAI: GoogleGenerativeAI | null = null;
   private model: any = null;
+  private apiKey: string = '';
 
   constructor() {
-    // Initialize with API key from environment variables
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (apiKey) {
+    // Check localStorage first, then environment variables
+    this.apiKey = localStorage.getItem('gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '';
+    if (this.apiKey) {
+      this.initializeAI(this.apiKey);
+    }
+  }
+
+  private initializeAI(apiKey: string) {
+    try {
       this.genAI = new GoogleGenerativeAI(apiKey);
       this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
+      this.apiKey = apiKey;
+    } catch (error) {
+      console.error('Failed to initialize Gemini AI:', error);
+      this.genAI = null;
+      this.model = null;
     }
+  }
+
+  updateApiKey(apiKey: string) {
+    if (apiKey) {
+      this.initializeAI(apiKey);
+    } else {
+      this.genAI = null;
+      this.model = null;
+      this.apiKey = '';
+    }
+  }
+
+  async testApiKey(apiKey: string): Promise<boolean> {
+    try {
+      const testAI = new GoogleGenerativeAI(apiKey);
+      const testModel = testAI.getGenerativeModel({ model: 'gemini-pro' });
+      
+      const result = await testModel.generateContent('Test connection');
+      const response = await result.response;
+      return !!response.text();
+    } catch (error) {
+      console.error('API key test failed:', error);
+      throw new Error('Invalid API key or network error');
+    }
+  }
+
+  isConfigured(): boolean {
+    return !!this.model && !!this.apiKey;
   }
 
   async processCommand(message: string, context: any = {}) {
     if (!this.model) {
-      throw new Error('Gemini API key not configured. Please add VITE_GEMINI_API_KEY to your environment variables.');
+      throw new Error('Gemini API key not configured. Please add your API key in Settings.');
     }
 
     const systemPrompt = `You are an AI assistant for a protein visualization tool powered by Molstar. 
@@ -50,6 +90,9 @@ User message: ${message}`;
       return response.text();
     } catch (error) {
       console.error('Gemini API error:', error);
+      if (error instanceof Error && error.message.includes('API_KEY_INVALID')) {
+        throw new Error('Invalid API key. Please check your Gemini API key in Settings.');
+      }
       throw new Error('Failed to process command with AI. Please try again.');
     }
   }

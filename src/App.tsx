@@ -5,6 +5,7 @@ import ProteinSelector from './components/ProteinSelector';
 import FileUploader from './components/FileUploader';
 import ControlPanel from './components/ControlPanel';
 import HelpDialog from './components/HelpDialog';
+import SettingsDialog from './components/SettingsDialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
 import { Button } from './components/ui/button';
 import { Separator } from './components/ui/separator';
@@ -20,6 +21,14 @@ function App() {
   const [selectedProtein, setSelectedProtein] = useState<string>('2PGH');
   const [currentStructureName, setCurrentStructureName] = useState<string>('2PGH');
   const [viewerReady, setViewerReady] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  // Check for API key on mount
+  useEffect(() => {
+    const savedKey = localStorage.getItem('gemini_api_key');
+    const envKey = import.meta.env.VITE_GEMINI_API_KEY;
+    setHasApiKey(!!(savedKey || envKey));
+  }, []);
 
   // Handle protein selection from samples
   const handleProteinSelect = useCallback(async (proteinId: string, file: string) => {
@@ -104,6 +113,11 @@ function App() {
     viewerRef.current.zoomOut();
   }, []);
 
+  // Handle API key updates
+  const handleApiKeyUpdate = useCallback((hasKey: boolean) => {
+    setHasApiKey(hasKey);
+  }, []);
+
   // Initialize with 2PGH as default protein
   useEffect(() => {
     const loadDefaultProtein = async () => {
@@ -141,6 +155,7 @@ function App() {
               </div>
             </div>
             <div className="flex items-center space-x-3">
+              <SettingsDialog onApiKeyUpdate={handleApiKeyUpdate} />
               <HelpDialog />
               <Button
                 variant="outline"
