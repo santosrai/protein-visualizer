@@ -43,6 +43,7 @@ interface ChatInterfaceProps {
 
 const QUICK_COMMANDS = [
   "Show water molecules",
+  "Hide water molecules",
   "Switch to surface view", 
   "Reset camera",
   "Show structure info",
@@ -61,7 +62,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     {
       id: '1',
       type: 'system',
-      content: 'Welcome! I can help you interact with the 3D protein structure. Try asking me to "show water molecules" or "switch to surface view".',
+      content: 'Welcome! I can help you interact with the 3D protein structure. Try asking me to "show water molecules", "hide water molecules", or "switch to surface view".',
       timestamp: new Date()
     }
   ]);
@@ -198,7 +199,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           console.error('AI processing error:', error);
           addMessage({
             type: 'system',
-            content: error instanceof Error ? error.message : 'Failed to process AI request. You can still use direct commands like "reset_view" or "switch_to_surface".'
+            content: error instanceof Error ? error.message : 'Failed to process AI request. You can still use direct commands like "reset_view", "hide_water", or "switch_to_surface".'
           });
         }
       } else {
@@ -206,15 +207,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         addMessage({
           type: 'system',
           content: apiKeyStatus.hasKey 
-            ? 'AI features require a valid Gemini API key. Please check your API key in Settings, or use direct commands like "reset_view" or "switch_to_surface".'
-            : 'AI features require a Gemini API key. Please configure it in Settings, or use direct commands like "reset_view" or "switch_to_surface".'
+            ? 'AI features require a valid Gemini API key. Please check your API key in Settings, or use direct commands like "reset_view", "hide_water", or "switch_to_surface".'
+            : 'AI features require a Gemini API key. Please configure it in Settings, or use direct commands like "reset_view", "hide_water", or "switch_to_surface".'
         });
       }
     } catch (error) {
       console.error('Chat error:', error);
       addMessage({
         type: 'system',
-        content: 'Sorry, I encountered an error. Please try again or use direct commands like "reset_view" or "switch_to_surface".'
+        content: 'Sorry, I encountered an error. Please try again or use direct commands like "reset_view", "hide_water", or "switch_to_surface".'
       });
     } finally {
       setIsLoading(false);

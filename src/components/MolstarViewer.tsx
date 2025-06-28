@@ -31,6 +31,7 @@ export interface ViewerControls {
   setRepresentation: (type: 'cartoon' | 'surface' | 'ball-and-stick' | 'spacefill') => void;
   getPlugin: () => PluginContext | null;
   showWaterMolecules: () => Promise<void>;
+  hideWaterMolecules: () => Promise<void>;
   hideLigands: () => Promise<void>;
   focusOnChain: (chainId: string) => Promise<void>;
   getSelectionInfo: () => Promise<string>;
@@ -46,6 +47,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const pluginRef = useRef<PluginContext | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isInitialized, setIsInitialized] = useState(false);
+    const waterRepresentationRef = useRef<string | null>(null);
 
     // Create the plugin specification with minimal UI
     const createSpec = useCallback(() => {
@@ -102,11 +104,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       try {
         setIsLoading(true);
         
-        // Clear existing structures
+        // Clear existing structures and reset water representation reference
         await PluginCommands.State.RemoveObject(pluginRef.current, { 
           state: pluginRef.current.state.data, 
           ref: pluginRef.current.state.data.tree.root.ref
         });
+        waterRepresentationRef.current = null;
 
         // Download and load the structure
         const data = await pluginRef.current.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
@@ -185,19 +188,93 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
-        if (structures.length === 0) return;
+        // First check if water representation already exists
+        if (waterRepresentationRef.current) {
+          throw new Error('Water molecules are already visible');
+        }
 
-        // Create water representation
-        await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        if (structures.length === 0) throw new Error('No structure loaded');
+
+        // Create water representation with water selection
+        const waterRepr = await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
           type: 'ball-and-stick',
-          typeParams: { 
-            includeTypes: ['water'] 
+          typeParams: {
+            sizeFactor: 0.3,
+            radiusOffset: 0,
+            linkRadius: 0.1
           },
-          color: 'element-symbol'
+          colorParams: {
+            carbonColor: { name: 'element-symbol' },
+            value: 0x88CCEE
+          }
+        }, { 
+          tag: 'water-representation'
         });
+
+        // Store reference to the water representation
+        if (waterRepr && waterRepr.ref) {
+          waterRepresentationRef.current = waterRepr.ref;
+        }
+
       } catch (error) {
         console.error('Failed to show water molecules:', error);
+        throw error;
+      }
+    }, []);
+
+    // Hide water molecules
+    const hideWaterMolecules = useCallback(async () => {
+      if (!pluginRef.current) return;
+
+      try {
+        // Method 1: If we have a stored reference, use it
+        if (waterRepresentationRef.current) {
+          await PluginCommands.State.RemoveObject(pluginRef.current, {
+            state: pluginRef.current.state.data,
+            ref: waterRepresentationRef.current
+          });
+          waterRepresentationRef.current = null;
+          return;
+        }
+
+        // Method 2: Find and remove representations with water tag
+        const representations = pluginRef.current.state.data.select(
+          StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
+        );
+
+        let foundWater = false;
+        for (const repr of representations) {
+          if (repr.transform.tags && repr.transform.tags.includes('water-representation')) {
+            await PluginCommands.State.RemoveObject(pluginRef.current, {
+              state: pluginRef.current.state.data,
+              ref: repr.transform.ref
+            });
+            foundWater = true;
+          }
+        }
+
+        if (!foundWater) {
+          // Method 3: Look for ball-and-stick representations (likely water)
+          for (const repr of representations) {
+            if (repr.obj && repr.obj.data && repr.obj.data.repr && 
+                repr.obj.data.repr.params && repr.obj.data.repr.params.type === 'ball-and-stick') {
+              await PluginCommands.State.RemoveObject(pluginRef.current, {
+                state: pluginRef.current.state.data,
+                ref: repr.transform.ref
+              });
+              foundWater = true;
+              break; // Only remove the first ball-and-stick representation
+            }
+          }
+        }
+
+        if (!foundWater) {
+          throw new Error('No water molecules found to hide');
+        }
+
+      } catch (error) {
+        console.error('Failed to hide water molecules:', error);
         throw error;
       }
     }, []);
@@ -367,6 +444,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       setRepresentation,
       getPlugin,
       showWaterMolecules,
+      hideWaterMolecules,
       hideLigands,
       focusOnChain,
       getSelectionInfo,
@@ -376,7 +454,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       getStructureInfo
     }), [
       loadStructure, resetView, zoomIn, zoomOut, setRepresentation, getPlugin,
-      showWaterMolecules, hideLigands, focusOnChain, getSelectionInfo,
+      showWaterMolecules, hideWaterMolecules, hideLigands, focusOnChain, getSelectionInfo,
       showOnlySelected, highlightChain, clearHighlights, getStructureInfo
     ]);
 

@@ -27,7 +27,20 @@ export class MolstarCommandProcessor {
           await viewer.showWaterMolecules();
           return 'Water molecules are now visible.';
         } catch (error) {
-          return 'Failed to show water molecules. They may not be present in this structure.';
+          return 'Failed to show water molecules. They may not be present in this structure or are already visible.';
+        }
+      }
+    });
+
+    this.commands.set('hide_water', {
+      name: 'hide_water',
+      description: 'Hide water molecules',
+      execute: async (viewer) => {
+        try {
+          await viewer.hideWaterMolecules();
+          return 'Water molecules have been hidden.';
+        } catch (error) {
+          return 'Failed to hide water molecules. They may not be currently visible.';
         }
       }
     });

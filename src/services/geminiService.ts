@@ -130,6 +130,7 @@ You can help users interact with 3D protein structures through specific commands
 
 Available commands you can suggest or execute:
 - "enable_water" - Show water molecules
+- "hide_water" - Hide water molecules
 - "hide_ligands" - Hide ligand molecules  
 - "zoom_chain [chain_id]" - Zoom to specific chain (A, B, C, etc.)
 - "show_selection_info" - Get information about current selection
