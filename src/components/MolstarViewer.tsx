@@ -428,6 +428,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         pluginRef.current = plugin;
         console.log('✅ Molstar plugin initialized:', plugin);
         
+        // Verify that essential plugin properties are available
+        if (!plugin.builders) {
+          throw new Error('Plugin builders not initialized - plugin is not ready for operations');
+        }
+        
+        console.log('✅ Plugin builders verified:', plugin.builders);
+        
         // Setup selection monitoring
         setupSelectionMonitoring(plugin);
         
