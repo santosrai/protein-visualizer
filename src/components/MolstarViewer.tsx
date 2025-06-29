@@ -65,28 +65,33 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const waterRepresentationRef = useRef<string | null>(null);
     const selectionSubscriptionRef = useRef<any>(null);
 
-    // Create the plugin specification with minimal UI
+    // Create the plugin specification with default Molstar UI enabled
     const createSpec = useCallback(() => {
       const spec = DefaultPluginUISpec();
+      
+      // Enable the default Molstar UI layout with State Tree, Sequence view, and Structure Tools
       spec.layout = {
         initial: {
-          isExpanded: false,
-          showControls: false,
+          isExpanded: true,  // Expand to show full UI
+          showControls: true,  // Show viewport controls
           regionState: {
-            bottom: 'hidden',
-            left: 'hidden',
-            right: 'hidden',
-            top: 'hidden',
+            bottom: 'hidden',  // Keep bottom panel hidden (not essential)
+            left: 'full',      // Show State Tree (full height)
+            right: 'full',     // Show Structure Tools (full height)
+            top: 'full',       // Show Sequence view (full width)
           }
         }
       };
+      
+      // Configure viewport to show more controls including selection mode
       spec.config = [
-        [PluginConfig.Viewport.ShowExpand, false],
-        [PluginConfig.Viewport.ShowControls, false],
-        [PluginConfig.Viewport.ShowSettings, false],
-        [PluginConfig.Viewport.ShowSelectionMode, false],
-        [PluginConfig.Viewport.ShowAnimation, false]
+        [PluginConfig.Viewport.ShowExpand, true],           // Show expand button
+        [PluginConfig.Viewport.ShowControls, true],         // Show viewport controls
+        [PluginConfig.Viewport.ShowSettings, true],         // Show settings button
+        [PluginConfig.Viewport.ShowSelectionMode, true],    // Show selection mode toggle
+        [PluginConfig.Viewport.ShowAnimation, true]         // Show animation controls
       ];
+      
       return spec;
     }, []);
 
@@ -417,7 +422,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!containerRef.current || pluginRef.current) return;
 
       try {
-        console.log('🚀 Initializing Molstar plugin...');
+        console.log('🚀 Initializing Molstar plugin with full UI...');
         setIsLoading(true);
         const spec = createSpec();
         const plugin = await createPluginUI({
@@ -426,7 +431,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           spec
         });
         pluginRef.current = plugin;
-        console.log('✅ Molstar plugin initialized:', plugin);
+        console.log('✅ Molstar plugin initialized with full UI:', plugin);
         
         // Verify that essential plugin properties are available
         if (!plugin.builders) {
@@ -440,7 +445,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         setIsInitialized(true);
         onReady?.(plugin);
-        console.log('🎉 Plugin setup complete');
+        console.log('🎉 Plugin setup complete with State Tree, Sequence view, and Structure Tools enabled');
       } catch (error) {
         console.error('❌ Failed to initialize molstar plugin:', error);
         onError?.(error as Error);
@@ -862,7 +867,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         {/* Loading overlay */}
         {isLoading && (
-          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded-lg">
+          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded-lg z-50">
             <div className="flex items-center space-x-2 text-white">
               <Loader2 className="h-6 w-6 animate-spin" />
               <span>Loading structure...</span>
@@ -870,39 +875,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           </div>
         )}
 
-        {/* Basic controls overlay */}
-        {isInitialized && !isLoading && (
-          <div className="absolute top-4 right-4 flex flex-col space-y-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={resetView}
-              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
-            >
-              <Home className="h-4 w-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={zoomIn}
-              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
-            >
-              <ZoomIn className="h-4 w-4" />
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={zoomOut}
-              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
-            >
-              <ZoomOut className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
-
-        {/* Selection info overlay */}
+        {/* Selection info overlay - positioned to not interfere with Molstar UI */}
         {currentSelection && (
-          <div className="absolute bottom-4 left-4 right-4">
+          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-40">
             <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm">
               <div className="p-3">
                 <p className="text-white text-sm font-medium">
