@@ -103,18 +103,24 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           const structureLoci = loci;
           const structure = structureLoci.structure;
           
-          if (!structureLoci.elements || structureLoci.elements.length === 0) {
+          // Enhanced check to ensure elements exists and is properly structured
+          if (!structureLoci.elements || 
+              !Array.isArray(structureLoci.elements) || 
+              structureLoci.elements.length === 0) {
             return null;
           }
 
           // Get the first element
           const element = structureLoci.elements[0];
-          const unit = structure.units[element.unit];
-          
-          if (!element.indices || element.indices.length === 0) {
+          if (!element || !element.indices || !Array.isArray(element.indices) || element.indices.length === 0) {
             return null;
           }
 
+          const unit = structure.units[element.unit];
+          if (!unit) {
+            return null;
+          }
+          
           // Get the first atom index
           const atomIndex = element.indices[0];
           
