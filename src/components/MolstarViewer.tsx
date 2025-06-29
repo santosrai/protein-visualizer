@@ -416,16 +416,18 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         // First try auth_seq_id (author sequence ID)
         if (residues.auth_seq_id && typeof residues.auth_seq_id.value === 'function') {
           const authSeqId = residues.auth_seq_id.value(index);
-          if (typeof authSeqId === 'number' && !isNaN(authSeqId)) {
-            return authSeqId;
+          const authSeqIdNum = Number(authSeqId);
+          if (!isNaN(authSeqIdNum)) {
+            return authSeqIdNum;
           }
         }
         
         // Fallback to label_seq_id (label sequence ID)
         if (residues.label_seq_id && typeof residues.label_seq_id.value === 'function') {
           const labelSeqId = residues.label_seq_id.value(index);
-          if (typeof labelSeqId === 'number' && !isNaN(labelSeqId)) {
-            return labelSeqId;
+          const labelSeqIdNum = Number(labelSeqId);
+          if (!isNaN(labelSeqIdNum)) {
+            return labelSeqIdNum;
           }
         }
         
