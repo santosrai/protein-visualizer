@@ -103,15 +103,17 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return null;
         }
 
-        console.log('📊 Number of selection entries:', manager.entries.length);
+        // Use the correct Molstar API to get selection entries
+        const entriesArray = Array.from(manager.entries.values());
+        console.log('📊 Number of selection entries (from values()):', entriesArray.length);
         
-        if (manager.entries.length === 0) {
+        if (entriesArray.length === 0) {
           console.log('❌ No selection entries found');
           return null;
         }
 
         // Get the first selection entry
-        const entry = manager.entries[0];
+        const entry = entriesArray[0];
         console.log('🎯 First selection entry:', entry);
         
         if (!entry || !entry.selection) {
