@@ -383,7 +383,74 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [onError, setupSelectionMonitoring]);
 
-    // Select residue range
+    // Helper function to get available chains in the structure
+    const getAvailableChains = useCallback((structure: Structure): string[] => {
+      const chains = new Set<string>();
+      
+      try {
+        // Iterate through units to find all chain IDs
+        for (const unit of structure.units) {
+          if (unit.model) {
+            const { atomicHierarchy } = unit.model;
+            if (atomicHierarchy && atomicHierarchy.chains) {
+              // Get chain information
+              for (let i = 0; i < atomicHierarchy.chains._rowCount; i++) {
+                const chainId = atomicHierarchy.chains.label_asym_id.value(i);
+                if (chainId) {
+                  chains.add(chainId);
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error getting available chains:', error);
+      }
+      
+      return Array.from(chains).sort();
+    }, []);
+
+    // Helper function to get residue range for a specific chain
+    const getResidueRangeForChain = useCallback((structure: Structure, chainId: string): { min: number; max: number } | null => {
+      let minResidue = Infinity;
+      let maxResidue = -Infinity;
+      let found = false;
+      
+      try {
+        for (const unit of structure.units) {
+          if (unit.model) {
+            const { atomicHierarchy } = unit.model;
+            if (atomicHierarchy && atomicHierarchy.residues && atomicHierarchy.chains) {
+              
+              // Check each residue
+              for (let i = 0; i < atomicHierarchy.residues._rowCount; i++) {
+                const residueChainIndex = atomicHierarchy.residues.label_entity_id.value(i);
+                
+                // Find corresponding chain
+                if (residueChainIndex < atomicHierarchy.chains._rowCount) {
+                  const currentChainId = atomicHierarchy.chains.label_asym_id.value(residueChainIndex);
+                  
+                  if (currentChainId === chainId) {
+                    const seqId = atomicHierarchy.residues.auth_seq_id.value(i);
+                    if (typeof seqId === 'number') {
+                      minResidue = Math.min(minResidue, seqId);
+                      maxResidue = Math.max(maxResidue, seqId);
+                      found = true;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error getting residue range for chain:', error);
+      }
+      
+      return found ? { min: minResidue, max: maxResidue } : null;
+    }, []);
+
+    // Select residue range with improved error handling
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
       const plugin = pluginRef.current;
       if (!plugin) {
@@ -404,6 +471,36 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           throw new Error('Structure data not available');
         }
 
+        // First, check if the chain exists
+        const availableChains = getAvailableChains(structure);
+        console.log('Available chains:', availableChains);
+        
+        if (!availableChains.includes(query.chainId)) {
+          throw new Error(`Chain '${query.chainId}' not found in the structure. Available chains: ${availableChains.join(', ')}`);
+        }
+
+        // Get the residue range for this chain
+        const residueRange = getResidueRangeForChain(structure, query.chainId);
+        if (!residueRange) {
+          throw new Error(`Chain '${query.chainId}' found but contains no residues with sequence IDs`);
+        }
+
+        console.log(`Chain ${query.chainId} residue range: ${residueRange.min} - ${residueRange.max}`);
+
+        // Check if the requested range is valid
+        if (query.startResidue > residueRange.max || query.endResidue < residueRange.min) {
+          throw new Error(`Residue range ${query.startResidue}-${query.endResidue} is outside the available range for chain '${query.chainId}' (${residueRange.min}-${residueRange.max})`);
+        }
+
+        // Warn if the range is partially outside
+        const actualStart = Math.max(query.startResidue, residueRange.min);
+        const actualEnd = Math.min(query.endResidue, residueRange.max);
+        let warningMessage = '';
+        
+        if (actualStart !== query.startResidue || actualEnd !== query.endResidue) {
+          warningMessage = `Note: Adjusted range to ${actualStart}-${actualEnd} to fit available residues. `;
+        }
+
         // Create selection query using Molstar's selection language
         const selection = Script.getStructureSelection(Q => 
           Q.struct.generator.atomGroups({
@@ -413,8 +510,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             ]),
             'residue-test': Q.core.rel.inRange([
               Q.struct.atomProperty.macromolecular.auth_seq_id(),
-              query.startResidue,
-              query.endResidue
+              actualStart,
+              actualEnd
             ])
           }), structure);
 
@@ -439,25 +536,25 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
           const selectionInfo: SelectionInfo = {
             chainId: query.chainId,
-            residueNumber: query.startResidue,
+            residueNumber: actualStart,
             atomCount: totalAtoms,
-            description: `Chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue} (${residueCount} residues, ${totalAtoms} atoms)`
+            description: `Chain ${query.chainId}, residues ${actualStart}-${actualEnd} (${residueCount} residues, ${totalAtoms} atoms)`
           };
 
           setCurrentSelection(selectionInfo);
           onSelectionChange?.(selectionInfo);
 
           console.log('✅ Residue range selected successfully');
-          return `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId}. Total: ${residueCount} residues, ${totalAtoms} atoms.`;
+          return `${warningMessage}Selected residues ${actualStart}-${actualEnd} in chain ${query.chainId}. Total: ${residueCount} residues, ${totalAtoms} atoms.`;
         } else {
-          throw new Error('No atoms found in the specified range');
+          throw new Error(`No atoms found in residue range ${actualStart}-${actualEnd} for chain '${query.chainId}'. This might indicate an issue with the structure data or residue numbering.`);
         }
 
       } catch (error) {
         console.error('❌ Failed to select residue range:', error);
         throw error;
       }
-    }, [onSelectionChange]);
+    }, [onSelectionChange, getAvailableChains, getResidueRangeForChain]);
 
     // Clear selection
     const clearSelection = useCallback(async (): Promise<void> => {
