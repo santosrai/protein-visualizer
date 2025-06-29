@@ -410,6 +410,58 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return Array.from(chains).sort();
     }, []);
 
+    // Helper function to safely get a sequence ID from residue data
+    const getResidueSequenceId = useCallback((residues: any, index: number): number | null => {
+      try {
+        // First try auth_seq_id (author sequence ID)
+        if (residues.auth_seq_id && typeof residues.auth_seq_id.value === 'function') {
+          const authSeqId = residues.auth_seq_id.value(index);
+          if (typeof authSeqId === 'number' && !isNaN(authSeqId)) {
+            return authSeqId;
+          }
+        }
+        
+        // Fallback to label_seq_id (label sequence ID)
+        if (residues.label_seq_id && typeof residues.label_seq_id.value === 'function') {
+          const labelSeqId = residues.label_seq_id.value(index);
+          if (typeof labelSeqId === 'number' && !isNaN(labelSeqId)) {
+            return labelSeqId;
+          }
+        }
+        
+        return null;
+      } catch (error) {
+        console.error('Error getting residue sequence ID:', error);
+        return null;
+      }
+    }, []);
+
+    // Helper function to safely get a chain ID from residue data
+    const getResidueChainId = useCallback((residues: any, index: number): string | null => {
+      try {
+        // Try label_asym_id first (most common)
+        if (residues.label_asym_id && typeof residues.label_asym_id.value === 'function') {
+          const chainId = residues.label_asym_id.value(index);
+          if (typeof chainId === 'string') {
+            return chainId;
+          }
+        }
+        
+        // Fallback to auth_asym_id
+        if (residues.auth_asym_id && typeof residues.auth_asym_id.value === 'function') {
+          const chainId = residues.auth_asym_id.value(index);
+          if (typeof chainId === 'string') {
+            return chainId;
+          }
+        }
+        
+        return null;
+      } catch (error) {
+        console.error('Error getting residue chain ID:', error);
+        return null;
+      }
+    }, []);
+
     // Helper function to get residue range for a specific chain
     const getResidueRangeForChain = useCallback((structure: Structure, chainId: string): { min: number; max: number } | null => {
       let minResidue = Infinity;
@@ -424,12 +476,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
               
               // Check each residue
               for (let i = 0; i < atomicHierarchy.residues._rowCount; i++) {
-                // Get the chain ID directly from the residue
-                const currentChainId = atomicHierarchy.residues.label_asym_id.value(i);
+                // Get the chain ID safely
+                const currentChainId = getResidueChainId(atomicHierarchy.residues, i);
                 
                 if (currentChainId === chainId) {
-                  const seqId = atomicHierarchy.residues.auth_seq_id.value(i);
-                  if (typeof seqId === 'number') {
+                  // Get the sequence ID safely
+                  const seqId = getResidueSequenceId(atomicHierarchy.residues, i);
+                  
+                  if (seqId !== null) {
                     minResidue = Math.min(minResidue, seqId);
                     maxResidue = Math.max(maxResidue, seqId);
                     found = true;
@@ -444,7 +498,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
       
       return found ? { min: minResidue, max: maxResidue } : null;
-    }, []);
+    }, [getResidueSequenceId, getResidueChainId]);
 
     // Select residue range with improved error handling
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
