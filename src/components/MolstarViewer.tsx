@@ -420,23 +420,19 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         for (const unit of structure.units) {
           if (unit.model) {
             const { atomicHierarchy } = unit.model;
-            if (atomicHierarchy && atomicHierarchy.residues && atomicHierarchy.chains) {
+            if (atomicHierarchy && atomicHierarchy.residues) {
               
               // Check each residue
               for (let i = 0; i < atomicHierarchy.residues._rowCount; i++) {
-                const residueChainIndex = atomicHierarchy.residues.label_entity_id.value(i);
+                // Get the chain ID directly from the residue
+                const currentChainId = atomicHierarchy.residues.label_asym_id.value(i);
                 
-                // Find corresponding chain
-                if (residueChainIndex < atomicHierarchy.chains._rowCount) {
-                  const currentChainId = atomicHierarchy.chains.label_asym_id.value(residueChainIndex);
-                  
-                  if (currentChainId === chainId) {
-                    const seqId = atomicHierarchy.residues.auth_seq_id.value(i);
-                    if (typeof seqId === 'number') {
-                      minResidue = Math.min(minResidue, seqId);
-                      maxResidue = Math.max(maxResidue, seqId);
-                      found = true;
-                    }
+                if (currentChainId === chainId) {
+                  const seqId = atomicHierarchy.residues.auth_seq_id.value(i);
+                  if (typeof seqId === 'number') {
+                    minResidue = Math.min(minResidue, seqId);
+                    maxResidue = Math.max(maxResidue, seqId);
+                    found = true;
                   }
                 }
               }
