@@ -103,7 +103,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           const structureLoci = loci;
           const structure = structureLoci.structure;
           
-          if (structureLoci.elements.length === 0) {
+          if (!structureLoci.elements || structureLoci.elements.length === 0) {
             return null;
           }
 
@@ -111,7 +111,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           const element = structureLoci.elements[0];
           const unit = structure.units[element.unit];
           
-          if (element.indices.length === 0) {
+          if (!element.indices || element.indices.length === 0) {
             return null;
           }
 
