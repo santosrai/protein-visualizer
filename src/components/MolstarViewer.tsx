@@ -65,27 +65,27 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const waterRepresentationRef = useRef<string | null>(null);
     const selectionSubscriptionRef = useRef<any>(null);
 
-    // Create the plugin specification with default Molstar UI enabled
+    // Create the plugin specification with contained Molstar UI
     const createSpec = useCallback(() => {
       const spec = DefaultPluginUISpec();
       
-      // Enable the default Molstar UI layout with State Tree, Sequence view, and Structure Tools
+      // Configure layout for contained UI - use collapsed panels that can be expanded
       spec.layout = {
         initial: {
-          isExpanded: true,  // Expand to show full UI
+          isExpanded: true,  // Start expanded but contained
           showControls: true,  // Show viewport controls
           regionState: {
-            bottom: 'hidden',  // Keep bottom panel hidden (not essential)
-            left: 'full',      // Show State Tree (full height)
-            right: 'full',     // Show Structure Tools (full height)
-            top: 'full',       // Show Sequence view (full width)
+            bottom: 'hidden',     // Keep bottom panel hidden
+            left: 'collapsed',    // Start with State Tree collapsed but available
+            right: 'collapsed',   // Start with Structure Tools collapsed but available  
+            top: 'collapsed',     // Start with Sequence view collapsed but available
           }
         }
       };
       
-      // Configure viewport to show more controls including selection mode
+      // Configure viewport to show essential controls
       spec.config = [
-        [PluginConfig.Viewport.ShowExpand, true],           // Show expand button
+        [PluginConfig.Viewport.ShowExpand, true],           // Allow panel expansion
         [PluginConfig.Viewport.ShowControls, true],         // Show viewport controls
         [PluginConfig.Viewport.ShowSettings, true],         // Show settings button
         [PluginConfig.Viewport.ShowSelectionMode, true],    // Show selection mode toggle
@@ -422,7 +422,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!containerRef.current || pluginRef.current) return;
 
       try {
-        console.log('🚀 Initializing Molstar plugin with full UI...');
+        console.log('🚀 Initializing Molstar plugin with contained UI...');
         setIsLoading(true);
         const spec = createSpec();
         const plugin = await createPluginUI({
@@ -431,7 +431,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           spec
         });
         pluginRef.current = plugin;
-        console.log('✅ Molstar plugin initialized with full UI:', plugin);
+        console.log('✅ Molstar plugin initialized with contained UI:', plugin);
         
         // Verify that essential plugin properties are available
         if (!plugin.builders) {
@@ -445,7 +445,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         setIsInitialized(true);
         onReady?.(plugin);
-        console.log('🎉 Plugin setup complete with State Tree, Sequence view, and Structure Tools enabled');
+        console.log('🎉 Plugin setup complete with collapsible panels');
       } catch (error) {
         console.error('❌ Failed to initialize molstar plugin:', error);
         onError?.(error as Error);
@@ -858,16 +858,20 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     }, [initializePlugin]);
 
     return (
-      <Card className={cn("relative w-full h-full bg-gray-900 border-gray-700", className)}>
+      <Card className={cn("relative w-full h-full bg-gray-900 border-gray-700 overflow-hidden", className)}>
         <div 
           ref={containerRef} 
-          className="w-full h-full rounded-lg overflow-hidden"
-          style={{ minHeight: '400px' }}
+          className="w-full h-full rounded-lg"
+          style={{ 
+            minHeight: '400px',
+            contain: 'layout style size',  // CSS containment
+            position: 'relative'
+          }}
         />
         
-        {/* Loading overlay */}
+        {/* Loading overlay with higher z-index */}
         {isLoading && (
-          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded-lg z-50">
+          <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center rounded-lg z-50">
             <div className="flex items-center space-x-2 text-white">
               <Loader2 className="h-6 w-6 animate-spin" />
               <span>Loading structure...</span>
@@ -877,14 +881,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
         {/* Selection info overlay - positioned to not interfere with Molstar UI */}
         {currentSelection && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-40">
-            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm">
+          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-40 pointer-events-none">
+            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm max-w-sm">
               <div className="p-3">
-                <p className="text-white text-sm font-medium">
+                <p className="text-white text-sm font-medium text-center">
                   Selected: {currentSelection.description}
                 </p>
                 {currentSelection.coordinates && (
-                  <p className="text-gray-400 text-xs mt-1">
+                  <p className="text-gray-400 text-xs mt-1 text-center">
                     Position: ({currentSelection.coordinates.x.toFixed(2)}, {currentSelection.coordinates.y.toFixed(2)}, {currentSelection.coordinates.z.toFixed(2)})
                   </p>
                 )}
