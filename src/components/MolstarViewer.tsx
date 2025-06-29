@@ -65,11 +65,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const waterRepresentationRef = useRef<string | null>(null);
     const selectionSubscriptionRef = useRef<any>(null);
 
-    // Create the plugin specification with contained Molstar UI
+    // Create the plugin specification with contained Molstar UI and hidden Structure Tools
     const createSpec = useCallback(() => {
       const spec = DefaultPluginUISpec();
       
-      // Configure layout for contained UI - use collapsed panels that can be expanded
+      // Configure layout for contained UI - hide Structure Tools completely
       spec.layout = {
         initial: {
           isExpanded: true,  // Start expanded but contained
@@ -77,7 +77,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           regionState: {
             bottom: 'hidden',     // Keep bottom panel hidden
             left: 'collapsed',    // Start with State Tree collapsed but available
-            right: 'collapsed',   // Start with Structure Tools collapsed but available  
+            right: 'hidden',      // Hide Structure Tools completely (not just collapsed)
             top: 'collapsed',     // Start with Sequence view collapsed but available
           }
         }
@@ -422,7 +422,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!containerRef.current || pluginRef.current) return;
 
       try {
-        console.log('🚀 Initializing Molstar plugin with contained UI...');
+        console.log('🚀 Initializing Molstar plugin with contained UI and hidden Structure Tools...');
         setIsLoading(true);
         const spec = createSpec();
         const plugin = await createPluginUI({
@@ -431,7 +431,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           spec
         });
         pluginRef.current = plugin;
-        console.log('✅ Molstar plugin initialized with contained UI:', plugin);
+        console.log('✅ Molstar plugin initialized with hidden Structure Tools:', plugin);
         
         // Verify that essential plugin properties are available
         if (!plugin.builders) {
@@ -445,7 +445,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         setIsInitialized(true);
         onReady?.(plugin);
-        console.log('🎉 Plugin setup complete with collapsible panels');
+        console.log('🎉 Plugin setup complete with State Tree and Sequence panels only');
       } catch (error) {
         console.error('❌ Failed to initialize molstar plugin:', error);
         onError?.(error as Error);
