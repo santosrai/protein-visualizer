@@ -9,6 +9,7 @@ import { StateSelection } from 'molstar/lib/mol-state';
 import { PluginStateObject } from 'molstar/lib/mol-plugin-state/objects';
 import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
+import { StructureElement } from 'molstar/lib/mol-model/structure';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut } from 'lucide-react';
@@ -88,124 +89,104 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return spec;
     }, []);
 
-    // Enhanced selection information extraction
-    const extractSelectionInfo = useCallback((plugin: PluginContext): SelectionInfo | null => {
+    // Extract selection information from click event
+    const extractSelectionFromClick = useCallback((plugin: PluginContext, clickData: any): SelectionInfo | null => {
       try {
-        if (!plugin.managers?.structure?.selection) {
+        if (!clickData || !clickData.current.loci) {
           return null;
         }
 
-        const selection = plugin.managers.structure.selection;
-        const entries = selection.entries;
-
-        if (!entries || entries.length === 0) {
-          return null;
-        }
-
-        // Get the first selection entry for detailed analysis
-        const entry = entries[0];
-        if (!entry || !entry.selection) {
-          return null;
-        }
-
-        // Try to extract detailed information from the selection
-        const loci = entry.selection;
+        const loci = clickData.current.loci;
         
-        // Initialize selection info
-        let selectionInfo: SelectionInfo = {
-          description: `Selection contains ${entries.length} item(s)`,
-          atomCount: entries.length
-        };
-
-        // Try to get more specific information if available
-        if (loci && loci.kind === 'structure-loci') {
+        // Check if this is a structure element loci
+        if (StructureElement.Loci.is(loci)) {
           const structureLoci = loci;
+          const structure = structureLoci.structure;
           
-          // Extract structure information
-          if (structureLoci.structure && structureLoci.elements) {
-            const structure = structureLoci.structure;
-            const elements = structureLoci.elements;
-            
-            // Get model data
-            const model = structure.models[0];
-            if (model && model.atomicHierarchy) {
-              const hierarchy = model.atomicHierarchy;
-              
-              // Get first element for detailed info
-              for (let i = 0; i < elements.length; i++) {
-                const element = elements[i];
-                if (element.indices && element.indices.length > 0) {
-                  const atomIndex = element.indices[0];
-                  
-                  // Extract atom information
-                  if (hierarchy.atoms && atomIndex < hierarchy.atoms._rowCount) {
-                    // Get residue information
-                    const residueIndex = hierarchy.atoms.residue_index.value(atomIndex);
-                    const chainIndex = hierarchy.residues.chain_index.value(residueIndex);
-                    
-                    // Get atom name
-                    const atomName = hierarchy.atoms.label_atom_id.value(atomIndex);
-                    
-                    // Get residue name and number
-                    const residueName = hierarchy.residues.label_comp_id.value(residueIndex);
-                    const residueNumber = hierarchy.residues.label_seq_id.value(residueIndex);
-                    
-                    // Get chain ID
-                    const chainId = hierarchy.chains.label_asym_id.value(chainIndex);
-                    
-                    // Get element type
-                    const elementType = hierarchy.atoms.type_symbol.value(atomIndex);
-                    
-                    // Get coordinates if available
-                    let coordinates;
-                    if (model.atomicConformation) {
-                      const x = model.atomicConformation.x.value(atomIndex);
-                      const y = model.atomicConformation.y.value(atomIndex);
-                      const z = model.atomicConformation.z.value(atomIndex);
-                      coordinates = { x, y, z };
-                    }
-                    
-                    selectionInfo = {
-                      residueName,
-                      residueNumber,
-                      chainId,
-                      atomName,
-                      elementType,
-                      coordinates,
-                      atomCount: elements.reduce((count, el) => count + (el.indices?.length || 0), 0),
-                      description: `Selected: ${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
-                    };
-                    
-                    break;
-                  }
-                }
-              }
-            }
+          if (structureLoci.elements.length === 0) {
+            return null;
           }
-        }
 
-        return selectionInfo;
+          // Get the first element
+          const element = structureLoci.elements[0];
+          const unit = structure.units[element.unit];
+          
+          if (element.indices.length === 0) {
+            return null;
+          }
+
+          // Get the first atom index
+          const atomIndex = element.indices[0];
+          
+          // Get location data
+          const location = StructureElement.Location.create(structure, unit, unit.elements[atomIndex]);
+          
+          // Extract residue information
+          const residueIndex = unit.residueIndex[atomIndex];
+          const residue = unit.model.atomicHierarchy.residues;
+          const atoms = unit.model.atomicHierarchy.atoms;
+          const chains = unit.model.atomicHierarchy.chains;
+          
+          // Get residue data
+          const residueName = residue.label_comp_id.value(residueIndex);
+          const residueNumber = residue.label_seq_id.value(residueIndex);
+          
+          // Get chain data
+          const chainIndex = residue.chain_index.value(residueIndex);
+          const chainId = chains.label_asym_id.value(chainIndex);
+          
+          // Get atom data
+          const atomName = atoms.label_atom_id.value(unit.elements[atomIndex]);
+          const elementType = atoms.type_symbol.value(unit.elements[atomIndex]);
+          
+          // Get coordinates
+          let coordinates;
+          const conformation = unit.conformation;
+          if (conformation) {
+            const pos = conformation.position(unit.elements[atomIndex], Vec3());
+            coordinates = { x: pos[0], y: pos[1], z: pos[2] };
+          }
+          
+          const selectionInfo: SelectionInfo = {
+            residueName,
+            residueNumber,
+            chainId,
+            atomName,
+            elementType,
+            coordinates,
+            atomCount: element.indices.length,
+            description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
+          };
+          
+          return selectionInfo;
+        }
+        
+        return null;
       } catch (error) {
-        console.error('Error extracting selection info:', error);
+        console.error('Error extracting selection from click:', error);
         return null;
       }
     }, []);
 
-    // Setup selection change listener
-    const setupSelectionListener = useCallback((plugin: PluginContext) => {
-      const handleSelectionChange = () => {
-        const selectionInfo = extractSelectionInfo(plugin);
+    // Setup interaction listener for clicks
+    const setupInteractionListener = useCallback((plugin: PluginContext) => {
+      const handleClick = (data: any) => {
+        const selectionInfo = extractSelectionFromClick(plugin, data);
         setCurrentSelection(selectionInfo);
         onSelectionChange?.(selectionInfo);
+        
+        if (selectionInfo) {
+          console.log('Selection detected:', selectionInfo);
+        }
       };
 
-      // Listen for selection changes
-      plugin.managers.structure.selection.events.changed.subscribe(handleSelectionChange);
+      // Subscribe to click interactions
+      const subscription = plugin.behaviors.interaction.click.subscribe(handleClick);
       
       return () => {
-        plugin.managers.structure.selection.events.changed.unsubscribe(handleSelectionChange);
+        subscription.unsubscribe();
       };
-    }, [extractSelectionInfo, onSelectionChange]);
+    }, [extractSelectionFromClick, onSelectionChange]);
 
     // Initialize the molstar plugin
     const initializePlugin = useCallback(async () => {
@@ -221,8 +202,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         });
         pluginRef.current = plugin;
         
-        // Setup selection listener
-        setupSelectionListener(plugin);
+        // Setup interaction listener
+        setupInteractionListener(plugin);
         
         setIsInitialized(true);
         onReady?.(plugin);
@@ -232,7 +213,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       } finally {
         setIsLoading(false);
       }
-    }, [createSpec, onReady, onError, setupSelectionListener]);
+    }, [createSpec, onReady, onError, setupInteractionListener]);
 
     // Load structure from URL
     const loadStructure = useCallback(async (url: string, format: string = 'pdb') => {
@@ -241,7 +222,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       try {
         setIsLoading(true);
         
-        // Clear existing structures and reset water representation reference
+        // Clear existing structures and reset selection
         await PluginCommands.State.RemoveObject(pluginRef.current, { 
           state: pluginRef.current.state.data, 
           ref: pluginRef.current.state.data.tree.root.ref
@@ -449,35 +430,33 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return 'No plugin available';
 
       try {
-        const selectionInfo = extractSelectionInfo(pluginRef.current);
-        
-        if (!selectionInfo) {
+        if (!currentSelection) {
           return 'No atoms or residues are currently selected. Click on the protein structure to make a selection, then ask again.';
         }
 
         let info = `Current Selection Details:\n\n`;
-        info += `${selectionInfo.description}\n\n`;
+        info += `${currentSelection.description}\n\n`;
         
-        if (selectionInfo.residueName) {
-          info += `• Residue: ${selectionInfo.residueName}\n`;
+        if (currentSelection.residueName) {
+          info += `• Residue: ${currentSelection.residueName}\n`;
         }
-        if (selectionInfo.residueNumber) {
-          info += `• Residue Number: ${selectionInfo.residueNumber}\n`;
+        if (currentSelection.residueNumber) {
+          info += `• Residue Number: ${currentSelection.residueNumber}\n`;
         }
-        if (selectionInfo.chainId) {
-          info += `• Chain: ${selectionInfo.chainId}\n`;
+        if (currentSelection.chainId) {
+          info += `• Chain: ${currentSelection.chainId}\n`;
         }
-        if (selectionInfo.atomName) {
-          info += `• Atom: ${selectionInfo.atomName}\n`;
+        if (currentSelection.atomName) {
+          info += `• Atom: ${currentSelection.atomName}\n`;
         }
-        if (selectionInfo.elementType) {
-          info += `• Element: ${selectionInfo.elementType}\n`;
+        if (currentSelection.elementType) {
+          info += `• Element: ${currentSelection.elementType}\n`;
         }
-        if (selectionInfo.atomCount) {
-          info += `• Total Atoms: ${selectionInfo.atomCount}\n`;
+        if (currentSelection.atomCount) {
+          info += `• Total Atoms: ${currentSelection.atomCount}\n`;
         }
-        if (selectionInfo.coordinates) {
-          info += `• Coordinates: (${selectionInfo.coordinates.x.toFixed(2)}, ${selectionInfo.coordinates.y.toFixed(2)}, ${selectionInfo.coordinates.z.toFixed(2)})\n`;
+        if (currentSelection.coordinates) {
+          info += `• Coordinates: (${currentSelection.coordinates.x.toFixed(2)}, ${currentSelection.coordinates.y.toFixed(2)}, ${currentSelection.coordinates.z.toFixed(2)})\n`;
         }
 
         return info;
@@ -485,7 +464,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         console.error('Failed to get selection info:', error);
         return 'Unable to access selection information. Please ensure a structure is loaded and try clicking on the protein to select parts of it.';
       }
-    }, [extractSelectionInfo]);
+    }, [currentSelection]);
 
     // Get current selection
     const getCurrentSelection = useCallback(() => {
@@ -662,7 +641,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm">
               <div className="p-3">
                 <p className="text-white text-sm font-medium">
-                  {currentSelection.description}
+                  Selected: {currentSelection.description}
                 </p>
                 {currentSelection.coordinates && (
                   <p className="text-gray-400 text-xs mt-1">
