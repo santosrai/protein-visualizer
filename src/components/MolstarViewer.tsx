@@ -9,7 +9,8 @@ import { StateSelection } from 'molstar/lib/mol-state';
 import { PluginStateObject } from 'molstar/lib/mol-plugin-state/objects';
 import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
-import { StructureElement, StructureProperties } from 'molstar/lib/mol-model/structure';
+import { StructureElement, StructureProperties, Structure } from 'molstar/lib/mol-model/structure';
+import { StructureSelection } from 'molstar/lib/mol-model/structure';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut } from 'lucide-react';
@@ -83,46 +84,73 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         }
       };
       
-      // Configure viewport to show essential controls
+      // Configure viewport to show essential controls including selection mode
       spec.config = [
         [PluginConfig.Viewport.ShowExpand, true],           // Allow panel expansion
         [PluginConfig.Viewport.ShowControls, true],         // Show viewport controls
         [PluginConfig.Viewport.ShowSettings, true],         // Show settings button
-        [PluginConfig.Viewport.ShowSelectionMode, true],    // Show selection mode toggle
+        [PluginConfig.Viewport.ShowSelectionMode, true],    // Show selection mode toggle - CRUCIAL
         [PluginConfig.Viewport.ShowAnimation, true]         // Show animation controls
       ];
       
       return spec;
     }, []);
 
-    // Simplified and robust selection extraction
+    // Extract selection info using proper Molstar API
     const extractSelectionInfo = useCallback((plugin: PluginContext): SelectionInfo | null => {
       try {
-        console.log('🔍 Extracting selection...');
+        console.log('🔍 Extracting selection using proper API...');
         
-        // Get the selection manager
+        // Get the structure selection manager
         const selectionManager = plugin.managers.structure.selection;
         if (!selectionManager) {
           console.log('❌ No selection manager available');
           return null;
         }
 
-        // Check if there are any selections
+        // Get all structure selections - this is the proper way according to docs
         const selections = selectionManager.structureSelections;
         if (!selections || selections.size === 0) {
-          console.log('❌ No selections available');
+          console.log('❌ No structure selections available');
           return null;
         }
 
-        // Get the first selection
-        const firstSelection = Array.from(selections.values())[0];
-        if (!firstSelection) {
-          console.log('❌ First selection is empty');
+        console.log('📊 Found', selections.size, 'selections');
+
+        // Get the first selection entry
+        const firstSelectionEntry = Array.from(selections.entries())[0];
+        if (!firstSelectionEntry) {
+          console.log('❌ No selection entry found');
           return null;
         }
 
-        // Get the selection loci
-        const loci = firstSelection.loci;
+        const [structureRef, structureSelection] = firstSelectionEntry;
+        
+        // Get the structure from the ref
+        const structureCell = plugin.state.data.cells.get(structureRef);
+        if (!structureCell || !structureCell.obj) {
+          console.log('❌ No structure cell found');
+          return null;
+        }
+
+        const structure = structureCell.obj.data as Structure;
+        if (!structure) {
+          console.log('❌ No structure data found');
+          return null;
+        }
+
+        // Get selection stats using StructureSelection
+        const selectionStats = StructureSelection.getStats(structureSelection);
+        console.log('📈 Selection stats:', selectionStats);
+
+        if (selectionStats.elementCount === 0) {
+          console.log('❌ No elements in selection');
+          return null;
+        }
+
+        // Convert selection to loci for easier processing
+        const loci = StructureSelection.toLoci(structureSelection, structure);
+        
         if (!StructureElement.Loci.is(loci)) {
           console.log('❌ Selection is not a StructureElement.Loci');
           return null;
@@ -133,14 +161,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return null;
         }
 
-        // Extract information from the first element
+        // Get the first element for detailed info
         const element = loci.elements[0];
         if (!element.indices || element.indices.length === 0) {
           console.log('❌ No indices in element');
           return null;
         }
 
-        const structure = loci.structure;
         const unit = structure.units[element.unit];
         if (!unit) {
           console.log('❌ No unit found');
@@ -154,7 +181,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         // Create location for property extraction
         const location = StructureElement.Location.create(structure, unit, elementIndex);
 
-        // Extract properties
+        // Extract properties using StructureProperties
         const residueName = StructureProperties.residue.label_comp_id(location);
         const residueNumber = StructureProperties.residue.label_seq_id(location);
         const chainId = StructureProperties.chain.label_asym_id(location);
@@ -167,7 +194,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           const pos = unit.conformation.position(elementIndex, Vec3());
           coordinates = { x: pos[0], y: pos[1], z: pos[2] };
         } catch (e) {
-          console.log('⚠️ Could not extract coordinates');
+          console.log('⚠️ Could not extract coordinates:', e);
         }
 
         const selectionInfo: SelectionInfo = {
@@ -177,11 +204,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           atomName,
           elementType,
           coordinates,
-          atomCount: element.indices.length,
+          atomCount: selectionStats.elementCount,
           description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
         };
 
-        console.log('✅ Selection extracted:', selectionInfo);
+        console.log('✅ Selection extracted successfully:', selectionInfo);
         return selectionInfo;
 
       } catch (error) {
@@ -190,9 +217,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // Setup simplified selection monitoring
+    // Setup selection monitoring using proper events
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
-      console.log('🎧 Setting up selection monitoring...');
+      console.log('🎧 Setting up selection monitoring with proper API...');
       
       // Clean up previous subscription
       if (selectionSubscriptionRef.current) {
@@ -200,11 +227,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // Subscribe to selection changes
-        const subscription = plugin.managers.structure.selection.events.changed.subscribe(() => {
-          console.log('🔔 Selection changed!');
+        // Subscribe to selection events - this is the correct way according to docs
+        const subscription = plugin.managers.structure.selection.events.changed.subscribe((event) => {
+          console.log('🔔 Selection changed event received:', event);
           
-          // Small delay to ensure selection is processed
+          // Process the selection change
           setTimeout(() => {
             const selectionInfo = extractSelectionInfo(plugin);
             setCurrentSelection(selectionInfo);
@@ -213,18 +240,36 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             if (selectionInfo) {
               console.log('✨ Selection updated:', selectionInfo.description);
             } else {
-              console.log('🔄 Selection cleared');
+              console.log('🔄 Selection cleared or no valid selection');
             }
-          }, 100);
+          }, 50); // Small delay to ensure selection is processed
         });
 
         selectionSubscriptionRef.current = subscription;
         console.log('✅ Selection monitoring setup complete');
 
+        // Also subscribe to interactivity events for immediate feedback
+        const interactivitySubscription = plugin.behaviors.interaction.click.subscribe((event) => {
+          console.log('🖱️ Click event detected:', event);
+          
+          // Small delay to allow selection to be processed
+          setTimeout(() => {
+            const selectionInfo = extractSelectionInfo(plugin);
+            if (selectionInfo) {
+              setCurrentSelection(selectionInfo);
+              onSelectionChange?.(selectionInfo);
+              console.log('🎯 Click selection processed:', selectionInfo.description);
+            }
+          }, 100);
+        });
+
         return () => {
           console.log('🧹 Cleaning up selection monitoring');
           if (subscription) {
             subscription.unsubscribe();
+          }
+          if (interactivitySubscription) {
+            interactivitySubscription.unsubscribe();
           }
         };
       } catch (error) {
@@ -255,6 +300,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         }
         
         console.log('✅ Plugin builders verified');
+        console.log('📝 Plugin managers available:', Object.keys(plugin.managers));
+        console.log('🏗️ Structure manager available:', !!plugin.managers.structure);
+        console.log('🎯 Selection manager available:', !!plugin.managers.structure?.selection);
         
         // Setup selection monitoring after plugin is fully ready
         setTimeout(() => {
@@ -305,6 +353,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         await PluginCommands.Camera.Reset(pluginRef.current);
         
         console.log('✅ Structure loaded successfully');
+        
+        // Log structure information for debugging
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        console.log('📊 Loaded structures count:', structures.length);
+        
       } catch (error) {
         console.error('❌ Failed to load structure:', error);
         onError?.(error as Error);
@@ -442,21 +495,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
               ref: repr.transform.ref
             });
             foundWater = true;
-          }
-        }
-
-        if (!foundWater) {
-          // Method 3: Look for ball-and-stick representations (likely water)
-          for (const repr of representations) {
-            if (repr.obj && repr.obj.data && repr.obj.data.repr && 
-                repr.obj.data.repr.params && repr.obj.data.repr.params.type === 'ball-and-stick') {
-              await PluginCommands.State.RemoveObject(pluginRef.current, {
-                state: pluginRef.current.state.data,
-                ref: repr.transform.ref
-              });
-              foundWater = true;
-              break; // Only remove the first ball-and-stick representation
-            }
           }
         }
 
