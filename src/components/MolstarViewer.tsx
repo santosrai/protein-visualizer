@@ -14,7 +14,6 @@ import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { logger } from '@/utils/logger';
 
 // Import required molstar styles
 import 'molstar/build/viewer/molstar.css';
@@ -99,17 +98,17 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     // Extract selection information from the current state
     const extractSelectionFromState = useCallback((plugin: PluginContext): SelectionInfo | null => {
       try {
-        logger.selection('Extracting selection from plugin state...');
+        console.log('🔍 Extracting selection from plugin state...');
         
         // Method 1: Try to get selection from selection manager
         const selectionManager = plugin.managers.structure.selection;
         if (selectionManager?.state?.entries) {
-          logger.selection('Selection manager entries found', selectionManager.state.entries);
+          console.log('📋 Selection manager entries:', selectionManager.state.entries);
           
           const entries = Array.from(selectionManager.state.entries);
           if (entries.length > 0) {
             const [key, entry] = entries[0];
-            logger.selection('First selection entry:', { key, entry });
+            console.log('🎯 First selection entry:', { key, entry });
             
             if (entry?.selection && StructureElement.Loci.is(entry.selection)) {
               return extractFromLoci(entry.selection, entry.structure);
@@ -120,12 +119,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         // Method 2: Try to get from interactivity manager's current loci
         const interactivity = plugin.managers.interactivity;
         if (interactivity?.lociGranularity) {
-          logger.selection('Checking interactivity loci granularity...');
+          console.log('🎮 Checking interactivity loci granularity...');
           
           // Check if there's a current loci being tracked
           if (interactivity.lociGranularity.current) {
             const currentLoci = interactivity.lociGranularity.current;
-            logger.selection('Current loci:', currentLoci);
+            console.log('📍 Current loci:', currentLoci);
             
             if (StructureElement.Loci.is(currentLoci)) {
               return extractFromLoci(currentLoci, currentLoci.structure);
@@ -133,10 +132,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           }
         }
         
-        logger.selection('No valid selection found in state');
+        console.log('❌ No valid selection found in state');
         return null;
       } catch (error) {
-        logger.error('Error extracting selection from state:', error);
+        console.error('❌ Error extracting selection from state:', error);
         return null;
       }
     }, []);
@@ -144,22 +143,22 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     // Helper function to extract information from a Loci object
     const extractFromLoci = useCallback((loci: StructureElement.Loci, structure: any): SelectionInfo | null => {
       try {
-        logger.selection('Extracting from loci:', loci);
+        console.log('🧬 Extracting from loci:', loci);
         
         if (!loci.elements || loci.elements.length === 0) {
-          logger.selection('No elements in loci');
+          console.log('❌ No elements in loci');
           return null;
         }
 
         const element = loci.elements[0];
         if (!element.indices || element.indices.length === 0) {
-          logger.selection('No indices in loci element');
+          console.log('❌ No indices in loci element');
           return null;
         }
 
         const unit = structure.units[element.unit];
         if (!unit) {
-          logger.selection('No unit found');
+          console.log('❌ No unit found');
           return null;
         }
 
@@ -176,7 +175,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         const atomName = StructureProperties.atom.label_atom_id(location);
         const elementType = StructureProperties.atom.type_symbol(location);
 
-        logger.selection('Extracted properties:', {
+        console.log('🧬 Extracted properties:', {
           residueName,
           residueNumber,
           chainId,
@@ -190,7 +189,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           const pos = unit.conformation.position(elementIndex, Vec3());
           coordinates = { x: pos[0], y: pos[1], z: pos[2] };
         } catch (e) {
-          logger.warn('Could not extract coordinates:', e);
+          console.log('⚠️ Could not extract coordinates:', e);
         }
 
         const selectionInfo: SelectionInfo = {
@@ -204,21 +203,21 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
         };
 
-        logger.selection('Successfully extracted selection info:', selectionInfo);
+        console.log('✅ Successfully extracted selection info:', selectionInfo);
         return selectionInfo;
       } catch (error) {
-        logger.error('Error extracting from loci:', error);
+        console.error('❌ Error extracting from loci:', error);
         return null;
       }
     }, []);
 
     // Setup comprehensive selection monitoring
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
-      logger.molstar('Setting up comprehensive selection monitoring...');
+      console.log('🎧 Setting up comprehensive selection monitoring...');
       
       // Clean up previous subscriptions
       if (selectionSubscriptionRef.current) {
-        logger.molstar('Cleaning up previous subscriptions');
+        console.log('🧹 Cleaning up previous subscriptions');
         if (Array.isArray(selectionSubscriptionRef.current)) {
           selectionSubscriptionRef.current.forEach(sub => sub.unsubscribe());
         } else {
@@ -231,25 +230,25 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       try {
         // Method 1: Selection manager events
         const selectionSub = plugin.managers.structure.selection.events.changed.subscribe(() => {
-          logger.selection('Selection manager changed event!');
+          console.log('🔔 Selection manager changed event!');
           setTimeout(() => {
             const selectionInfo = extractSelectionFromState(plugin);
             if (selectionInfo) {
               setCurrentSelection(selectionInfo);
               onSelectionChange?.(selectionInfo);
-              logger.selection('Selection updated from manager:', selectionInfo.description);
+              console.log('✨ Selection updated from manager:', selectionInfo.description);
             }
           }, 50);
         });
         subscriptions.push(selectionSub);
       } catch (error) {
-        logger.warn('Could not subscribe to selection events:', error);
+        console.log('⚠️ Could not subscribe to selection events:', error);
       }
 
       try {
         // Method 2: Click events with better timing
         const clickSub = plugin.behaviors.interaction.click.subscribe((event) => {
-          logger.viewer('Click event detected:', event);
+          console.log('👆 Click event detected:', event);
           
           // Use multiple timeouts to handle different processing delays
           [50, 150, 300].forEach((delay, index) => {
@@ -258,48 +257,48 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
               if (selectionInfo) {
                 setCurrentSelection(selectionInfo);
                 onSelectionChange?.(selectionInfo);
-                logger.selection(`Click selection updated (attempt ${index + 1}):`, selectionInfo.description);
+                console.log(`✨ Click selection updated (attempt ${index + 1}):`, selectionInfo.description);
               } else if (index === 0) {
-                logger.debug(`No selection on attempt ${index + 1}, will retry...`);
+                console.log(`🔄 No selection on attempt ${index + 1}, will retry...`);
               }
             }, delay);
           });
         });
         subscriptions.push(clickSub);
       } catch (error) {
-        logger.warn('Could not subscribe to click events:', error);
+        console.log('⚠️ Could not subscribe to click events:', error);
       }
 
       try {
         // Method 3: Monitor interactivity state changes
         const interactivitySub = plugin.managers.interactivity.events.changed.subscribe(() => {
-          logger.viewer('Interactivity changed event!');
+          console.log('🎮 Interactivity changed event!');
           setTimeout(() => {
             const selectionInfo = extractSelectionFromState(plugin);
             if (selectionInfo) {
               setCurrentSelection(selectionInfo);
               onSelectionChange?.(selectionInfo);
-              logger.selection('Selection updated from interactivity:', selectionInfo.description);
+              console.log('✨ Selection updated from interactivity:', selectionInfo.description);
             }
           }, 50);
         });
         subscriptions.push(interactivitySub);
       } catch (error) {
-        logger.warn('Could not subscribe to interactivity events:', error);
+        console.log('⚠️ Could not subscribe to interactivity events:', error);
       }
 
       // Store all subscriptions
       selectionSubscriptionRef.current = subscriptions;
 
-      logger.molstar('Selection monitoring setup complete with', subscriptions.length, 'subscriptions');
+      console.log('✅ Selection monitoring setup complete with', subscriptions.length, 'subscriptions');
 
       return () => {
-        logger.molstar('Cleaning up selection monitoring');
+        console.log('🧹 Cleaning up selection monitoring');
         subscriptions.forEach(sub => {
           try {
             sub.unsubscribe();
           } catch (e) {
-            logger.warn('Error unsubscribing:', e);
+            console.log('⚠️ Error unsubscribing:', e);
           }
         });
       };
@@ -310,7 +309,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!containerRef.current || pluginRef.current) return;
 
       try {
-        logger.molstar('Initializing Molstar plugin with comprehensive selection support...');
+        console.log('🚀 Initializing Molstar plugin with comprehensive selection support...');
         setIsLoading(true);
         const spec = createSpec();
         const plugin = await createPluginUI({
@@ -319,14 +318,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           spec
         });
         pluginRef.current = plugin;
-        logger.molstar('Molstar plugin initialized:', plugin);
+        console.log('✅ Molstar plugin initialized:', plugin);
         
         // Verify that essential plugin properties are available
         if (!plugin.builders) {
           throw new Error('Plugin builders not initialized - plugin is not ready for operations');
         }
         
-        logger.molstar('Plugin builders verified');
+        console.log('✅ Plugin builders verified:', plugin.builders);
         
         // Setup selection monitoring after plugin is fully ready
         setTimeout(() => {
@@ -335,9 +334,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         setIsInitialized(true);
         onReady?.(plugin);
-        logger.molstar('Plugin setup complete with enhanced selection tracking');
+        console.log('🎉 Plugin setup complete with enhanced selection tracking');
       } catch (error) {
-        logger.error('Failed to initialize molstar plugin:', error);
+        console.error('❌ Failed to initialize molstar plugin:', error);
         onError?.(error as Error);
       } finally {
         setIsLoading(false);
@@ -349,7 +348,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.molstar(`Loading structure from: ${url}`);
+        console.log(`📁 Loading structure from: ${url}`);
         setIsLoading(true);
         
         // Clear existing structures and reset selection
@@ -359,7 +358,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         });
         waterRepresentationRef.current = null;
         setCurrentSelection(null);
-        logger.molstar('Cleared existing structures and selection');
+        console.log('🧹 Cleared existing structures and selection');
 
         // Download and load the structure
         const data = await pluginRef.current.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
@@ -376,9 +375,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         // Focus the camera on the structure
         await PluginCommands.Camera.Reset(pluginRef.current);
         
-        logger.molstar('Structure loaded successfully');
+        console.log('✅ Structure loaded successfully');
       } catch (error) {
-        logger.error('Failed to load structure:', error);
+        console.error('❌ Failed to load structure:', error);
         onError?.(error as Error);
       } finally {
         setIsLoading(false);
@@ -388,21 +387,21 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     // Reset camera view
     const resetView = useCallback(() => {
       if (!pluginRef.current) return;
-      logger.viewer('Resetting camera view');
+      console.log('📷 Resetting camera view');
       PluginCommands.Camera.Reset(pluginRef.current);
     }, []);
 
     // Zoom in
     const zoomIn = useCallback(() => {
       if (!pluginRef.current) return;
-      logger.viewer('Zooming in');
+      console.log('🔍 Zooming in');
       PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 20 });
     }, []);
 
     // Zoom out  
     const zoomOut = useCallback(() => {
       if (!pluginRef.current) return;
-      logger.viewer('Zooming out');
+      console.log('🔍 Zooming out');
       PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 50 });
     }, []);
 
@@ -411,7 +410,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.viewer(`Setting representation to: ${type}`);
+        console.log(`🎨 Setting representation to: ${type}`);
         
         // Remove existing representations
         const reprs = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
@@ -433,9 +432,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           color: 'chain-id'
         });
 
-        logger.viewer(`Representation changed to: ${type}`);
+        console.log(`✅ Representation changed to: ${type}`);
       } catch (error) {
-        logger.error('Failed to set representation:', error);
+        console.error('❌ Failed to set representation:', error);
         onError?.(error as Error);
       }
     }, [onError]);
@@ -445,7 +444,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.viewer('Showing water molecules');
+        console.log('💧 Showing water molecules');
         
         // First check if water representation already exists
         if (waterRepresentationRef.current) {
@@ -476,9 +475,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           waterRepresentationRef.current = waterRepr.ref;
         }
 
-        logger.viewer('Water molecules shown');
+        console.log('✅ Water molecules shown');
       } catch (error) {
-        logger.error('Failed to show water molecules:', error);
+        console.error('❌ Failed to show water molecules:', error);
         throw error;
       }
     }, []);
@@ -488,7 +487,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.viewer('Hiding water molecules');
+        console.log('💧 Hiding water molecules');
         
         // Method 1: If we have a stored reference, use it
         if (waterRepresentationRef.current) {
@@ -497,7 +496,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             ref: waterRepresentationRef.current
           });
           waterRepresentationRef.current = null;
-          logger.viewer('Water molecules hidden using stored reference');
+          console.log('✅ Water molecules hidden using stored reference');
           return;
         }
 
@@ -536,9 +535,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           throw new Error('No water molecules found to hide');
         }
 
-        logger.viewer('Water molecules hidden');
+        console.log('✅ Water molecules hidden');
       } catch (error) {
-        logger.error('Failed to hide water molecules:', error);
+        console.error('❌ Failed to hide water molecules:', error);
         throw error;
       }
     }, []);
@@ -548,9 +547,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.debug('Hide ligands functionality would be implemented here');
+        console.log('💊 Hide ligands functionality would be implemented here');
       } catch (error) {
-        logger.error('Failed to hide ligands:', error);
+        console.error('❌ Failed to hide ligands:', error);
         throw error;
       }
     }, []);
@@ -560,9 +559,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.debug(`Focus on chain ${chainId} functionality would be implemented here`);
+        console.log(`🔗 Focus on chain ${chainId} functionality would be implemented here`);
       } catch (error) {
-        logger.error('Failed to focus on chain:', error);
+        console.error('❌ Failed to focus on chain:', error);
         throw error;
       }
     }, []);
@@ -570,12 +569,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     // Get selection information - Enhanced implementation
     const getSelectionInfo = useCallback(async (): Promise<string> => {
       if (!pluginRef.current) {
-        logger.debug('No plugin available for getSelectionInfo');
+        console.log('❌ No plugin available for getSelectionInfo');
         return 'No plugin available';
       }
 
       try {
-        logger.debug('Getting selection info, current selection:', currentSelection);
+        console.log('📋 Getting selection info, current selection:', currentSelection);
         
         if (!currentSelection) {
           return 'No atoms or residues are currently selected. Click on the protein structure to make a selection, then ask again.';
@@ -606,17 +605,17 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           info += `• Coordinates: (${currentSelection.coordinates.x.toFixed(2)}, ${currentSelection.coordinates.y.toFixed(2)}, ${currentSelection.coordinates.z.toFixed(2)})\n`;
         }
 
-        logger.debug('Selection info generated:', info);
+        console.log('✅ Selection info generated:', info);
         return info;
       } catch (error) {
-        logger.error('Failed to get selection info:', error);
+        console.error('❌ Failed to get selection info:', error);
         return 'Unable to access selection information. Please ensure a structure is loaded and try clicking on the protein to select parts of it.';
       }
     }, [currentSelection]);
 
     // Get current selection
     const getCurrentSelection = useCallback(() => {
-      logger.debug('getCurrentSelection called, returning:', currentSelection);
+      console.log('📋 getCurrentSelection called, returning:', currentSelection);
       return currentSelection;
     }, [currentSelection]);
 
@@ -625,9 +624,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.debug('Show only selected functionality would be implemented here');
+        console.log('👁️ Show only selected functionality would be implemented here');
       } catch (error) {
-        logger.error('Failed to show only selected:', error);
+        console.error('❌ Failed to show only selected:', error);
         throw error;
       }
     }, []);
@@ -637,9 +636,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.debug(`Highlight chain ${chainId} functionality would be implemented here`);
+        console.log(`🎯 Highlight chain ${chainId} functionality would be implemented here`);
       } catch (error) {
-        logger.error('Failed to highlight chain:', error);
+        console.error('❌ Failed to highlight chain:', error);
         throw error;
       }
     }, []);
@@ -649,10 +648,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        logger.viewer('Clearing highlights');
+        console.log('🧹 Clearing highlights');
         await PluginCommands.Interactivity.ClearHighlights(pluginRef.current);
       } catch (error) {
-        logger.error('Failed to clear highlights:', error);
+        console.error('❌ Failed to clear highlights:', error);
         throw error;
       }
     }, []);
@@ -660,12 +659,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     // Get structure information
     const getStructureInfo = useCallback(async (): Promise<string> => {
       if (!pluginRef.current) {
-        logger.debug('No plugin available for getStructureInfo');
+        console.log('❌ No plugin available for getStructureInfo');
         return 'No plugin available';
       }
 
       try {
-        logger.debug('Getting structure info');
+        console.log('🏗️ Getting structure info');
         
         const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) {
@@ -692,13 +691,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             info += `• Models: ${data.models.length}\n`;
           }
           
-          logger.debug('Structure info generated:', info);
+          console.log('✅ Structure info generated:', info);
           return info;
         }
 
         return 'Structure is loaded but detailed information is not available.';
       } catch (error) {
-        logger.error('Failed to get structure info:', error);
+        console.error('❌ Failed to get structure info:', error);
         return 'Failed to get structure information.';
       }
     }, []);
@@ -736,21 +735,21 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
       // Cleanup on unmount
       return () => {
-        logger.molstar('Cleaning up MolstarViewer component');
+        console.log('🧹 Cleaning up MolstarViewer component');
         if (selectionSubscriptionRef.current) {
           if (Array.isArray(selectionSubscriptionRef.current)) {
             selectionSubscriptionRef.current.forEach(sub => {
               try {
                 sub.unsubscribe();
               } catch (e) {
-                logger.warn('Error during cleanup:', e);
+                console.log('⚠️ Error during cleanup:', e);
               }
             });
           } else {
             try {
               selectionSubscriptionRef.current.unsubscribe();
             } catch (e) {
-              logger.warn('Error during cleanup:', e);
+              console.log('⚠️ Error during cleanup:', e);
             }
           }
         }
