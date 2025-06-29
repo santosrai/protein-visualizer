@@ -95,89 +95,78 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return spec;
     }, []);
 
-    // Extract selection information from click/hover events
-    const extractSelectionFromEvent = useCallback((plugin: PluginContext): SelectionInfo | null => {
+    // Extract selection information from the current state
+    const extractSelectionFromState = useCallback((plugin: PluginContext): SelectionInfo | null => {
       try {
-        console.log('🔍 Extracting selection from current state...');
+        console.log('🔍 Extracting selection from plugin state...');
         
-        // Get the current selection from the plugin state
+        // Method 1: Try to get selection from selection manager
         const selectionManager = plugin.managers.structure.selection;
-        console.log('📋 Selection manager:', selectionManager);
+        if (selectionManager?.state?.entries) {
+          console.log('📋 Selection manager entries:', selectionManager.state.entries);
+          
+          const entries = Array.from(selectionManager.state.entries);
+          if (entries.length > 0) {
+            const [key, entry] = entries[0];
+            console.log('🎯 First selection entry:', { key, entry });
+            
+            if (entry?.selection && StructureElement.Loci.is(entry.selection)) {
+              return extractFromLoci(entry.selection, entry.structure);
+            }
+          }
+        }
         
-        // Check if there are any selections
-        if (!selectionManager || !selectionManager.state || !selectionManager.state.entries) {
-          console.log('❌ No selection manager state or entries');
-          return null;
+        // Method 2: Try to get from interactivity manager's current loci
+        const interactivity = plugin.managers.interactivity;
+        if (interactivity?.lociGranularity) {
+          console.log('🎮 Checking interactivity loci granularity...');
+          
+          // Check if there's a current loci being tracked
+          if (interactivity.lociGranularity.current) {
+            const currentLoci = interactivity.lociGranularity.current;
+            console.log('📍 Current loci:', currentLoci);
+            
+            if (StructureElement.Loci.is(currentLoci)) {
+              return extractFromLoci(currentLoci, currentLoci.structure);
+            }
+          }
         }
-
-        console.log('📊 Selection state:', selectionManager.state);
-        console.log('📊 Selection entries:', selectionManager.state.entries);
-
-        // Get the first selection entry from the state
-        const entries = Array.from(selectionManager.state.entries);
-        console.log('📊 Number of entries in state:', entries.length);
-
-        if (entries.length === 0) {
-          console.log('❌ No selection entries in state');
-          return null;
-        }
-
-        const [key, entry] = entries[0];
-        console.log('🎯 First selection entry key:', key);
-        console.log('🎯 First selection entry:', entry);
-
-        if (!entry || !entry.selection) {
-          console.log('❌ No selection in first entry');
-          return null;
-        }
-
-        const selection = entry.selection;
-        const structure = entry.structure;
         
-        console.log('🧬 Selection object:', selection);
-        console.log('🏗️ Structure object:', structure);
+        console.log('❌ No valid selection found in state');
+        return null;
+      } catch (error) {
+        console.error('❌ Error extracting selection from state:', error);
+        return null;
+      }
+    }, []);
 
-        if (!StructureElement.Loci.is(selection)) {
-          console.log('❌ Selection is not a StructureElement.Loci');
-          return null;
-        }
-
-        if (!selection.elements || selection.elements.length === 0) {
-          console.log('❌ No elements in selection');
-          return null;
-        }
-
-        console.log('🔢 Number of selected elements:', selection.elements.length);
-
-        // Get the first element
-        const element = selection.elements[0];
-        console.log('⚛️ First selected element:', element);
+    // Helper function to extract information from a Loci object
+    const extractFromLoci = useCallback((loci: StructureElement.Loci, structure: any): SelectionInfo | null => {
+      try {
+        console.log('🧬 Extracting from loci:', loci);
         
-        if (!element || !element.indices || element.indices.length === 0) {
-          console.log('❌ No indices in first element');
+        if (!loci.elements || loci.elements.length === 0) {
+          console.log('❌ No elements in loci');
           return null;
         }
 
-        console.log('📍 Number of indices:', element.indices.length);
+        const element = loci.elements[0];
+        if (!element.indices || element.indices.length === 0) {
+          console.log('❌ No indices in loci element');
+          return null;
+        }
 
         const unit = structure.units[element.unit];
         if (!unit) {
-          console.log('❌ No unit found for element');
+          console.log('❌ No unit found');
           return null;
         }
 
-        console.log('🧱 Unit:', unit);
-
-        // Get the first atom index
         const atomIndex = element.indices[0];
         const elementIndex = unit.elements[atomIndex];
         
-        console.log('🎯 Atom index:', atomIndex);
-        console.log('🎯 Element index:', elementIndex);
-
         // Create location for property extraction
         const location = StructureElement.Location.create(structure, unit, elementIndex);
-        console.log('📍 Location:', location);
 
         // Extract properties using StructureProperties
         const residueName = StructureProperties.residue.label_comp_id(location);
@@ -186,19 +175,19 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         const atomName = StructureProperties.atom.label_atom_id(location);
         const elementType = StructureProperties.atom.type_symbol(location);
 
-        console.log('🧬 Extracted properties:');
-        console.log('  - Residue name:', residueName);
-        console.log('  - Residue number:', residueNumber);
-        console.log('  - Chain ID:', chainId);
-        console.log('  - Atom name:', atomName);
-        console.log('  - Element type:', elementType);
+        console.log('🧬 Extracted properties:', {
+          residueName,
+          residueNumber,
+          chainId,
+          atomName,
+          elementType
+        });
 
         // Get coordinates
         let coordinates;
         try {
           const pos = unit.conformation.position(elementIndex, Vec3());
           coordinates = { x: pos[0], y: pos[1], z: pos[2] };
-          console.log('📍 Coordinates:', coordinates);
         } catch (e) {
           console.log('⚠️ Could not extract coordinates:', e);
         }
@@ -214,215 +203,113 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
         };
 
-        console.log('✅ Final selection info:', selectionInfo);
+        console.log('✅ Successfully extracted selection info:', selectionInfo);
         return selectionInfo;
       } catch (error) {
-        console.error('❌ Error extracting selection:', error);
-        console.error('Stack trace:', error.stack);
+        console.error('❌ Error extracting from loci:', error);
         return null;
       }
     }, []);
 
-    // Alternative method using interactivity manager
-    const extractSelectionFromInteractivity = useCallback((plugin: PluginContext): SelectionInfo | null => {
-      try {
-        console.log('🔍 Trying interactivity manager approach...');
-        
-        // Get the interactivity manager which tracks hover/click
-        const interactivity = plugin.managers.interactivity;
-        console.log('🎮 Interactivity manager:', interactivity);
-
-        if (!interactivity || !interactivity.lociHighlights) {
-          console.log('❌ No interactivity manager or loci highlights');
-          return null;
-        }
-
-        console.log('🎯 Loci highlights:', interactivity.lociHighlights);
-
-        // Try to get the current loci (location of interaction)
-        const highlights = interactivity.lociHighlights;
-        
-        // Check if highlights is a Map instance and has content
-        if (!highlights || !(highlights instanceof Map) || highlights.size === 0) {
-          console.log('❌ No highlights available or not a Map');
-          return null;
-        }
-
-        console.log('📊 Number of highlights:', highlights.size);
-
-        // Get the first highlight
-        const firstHighlight = highlights.values().next().value;
-        console.log('🎯 First highlight:', firstHighlight);
-
-        if (!firstHighlight || !firstHighlight.loci) {
-          console.log('❌ No loci in first highlight');
-          return null;
-        }
-
-        const loci = firstHighlight.loci;
-        console.log('📍 Loci:', loci);
-
-        if (!StructureElement.Loci.is(loci)) {
-          console.log('❌ Loci is not a StructureElement.Loci');
-          return null;
-        }
-
-        if (!loci.elements || loci.elements.length === 0) {
-          console.log('❌ No elements in loci');
-          return null;
-        }
-
-        const element = loci.elements[0];
-        const structure = loci.structure;
-        
-        console.log('⚛️ Element from loci:', element);
-        console.log('🏗️ Structure from loci:', structure);
-
-        if (!element.indices || element.indices.length === 0) {
-          console.log('❌ No indices in loci element');
-          return null;
-        }
-
-        const unit = structure.units[element.unit];
-        if (!unit) {
-          console.log('❌ No unit found for loci element');
-          return null;
-        }
-
-        const atomIndex = element.indices[0];
-        const elementIndex = unit.elements[atomIndex];
-        
-        const location = StructureElement.Location.create(structure, unit, elementIndex);
-
-        // Extract properties
-        const residueName = StructureProperties.residue.label_comp_id(location);
-        const residueNumber = StructureProperties.residue.label_seq_id(location);
-        const chainId = StructureProperties.chain.label_asym_id(location);
-        const atomName = StructureProperties.atom.label_atom_id(location);
-        const elementType = StructureProperties.atom.type_symbol(location);
-
-        console.log('🧬 Extracted from interactivity:');
-        console.log('  - Residue name:', residueName);
-        console.log('  - Residue number:', residueNumber);
-        console.log('  - Chain ID:', chainId);
-        console.log('  - Atom name:', atomName);
-        console.log('  - Element type:', elementType);
-
-        let coordinates;
-        try {
-          const pos = unit.conformation.position(elementIndex, Vec3());
-          coordinates = { x: pos[0], y: pos[1], z: pos[2] };
-        } catch (e) {
-          console.log('⚠️ Could not extract coordinates from interactivity:', e);
-        }
-
-        const selectionInfo: SelectionInfo = {
-          residueName,
-          residueNumber,
-          chainId,
-          atomName,
-          elementType,
-          coordinates,
-          atomCount: element.indices.length,
-          description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
-        };
-
-        console.log('✅ Selection info from interactivity:', selectionInfo);
-        return selectionInfo;
-      } catch (error) {
-        console.error('❌ Error extracting from interactivity:', error);
-        return null;
-      }
-    }, []);
-
-    // Monitor selection changes using multiple approaches
+    // Setup comprehensive selection monitoring
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
-      console.log('🎧 Setting up selection monitoring...');
+      console.log('🎧 Setting up comprehensive selection monitoring...');
       
-      // Clean up previous subscription
+      // Clean up previous subscriptions
       if (selectionSubscriptionRef.current) {
-        console.log('🧹 Cleaning up previous subscription');
-        selectionSubscriptionRef.current.unsubscribe();
+        console.log('🧹 Cleaning up previous subscriptions');
+        if (Array.isArray(selectionSubscriptionRef.current)) {
+          selectionSubscriptionRef.current.forEach(sub => sub.unsubscribe());
+        } else {
+          selectionSubscriptionRef.current.unsubscribe();
+        }
       }
 
-      // Method 1: Subscribe to selection changes
+      const subscriptions: any[] = [];
+
       try {
-        selectionSubscriptionRef.current = plugin.managers.structure.selection.events.changed.subscribe(() => {
-          console.log('🔔 Selection changed event triggered!');
-          
-          const selectionInfo = extractSelectionFromEvent(plugin);
-          console.log('📄 Extracted selection info from event:', selectionInfo);
-          
-          if (selectionInfo) {
-            setCurrentSelection(selectionInfo);
-            onSelectionChange?.(selectionInfo);
-            console.log('✨ Selection updated successfully:', selectionInfo.description);
-          } else {
-            console.log('🚫 No valid selection from event');
-          }
+        // Method 1: Selection manager events
+        const selectionSub = plugin.managers.structure.selection.events.changed.subscribe(() => {
+          console.log('🔔 Selection manager changed event!');
+          setTimeout(() => {
+            const selectionInfo = extractSelectionFromState(plugin);
+            if (selectionInfo) {
+              setCurrentSelection(selectionInfo);
+              onSelectionChange?.(selectionInfo);
+              console.log('✨ Selection updated from manager:', selectionInfo.description);
+            }
+          }, 50);
         });
+        subscriptions.push(selectionSub);
       } catch (error) {
         console.log('⚠️ Could not subscribe to selection events:', error);
       }
 
-      // Method 2: Monitor click events
-      const clickSubscription = plugin.behaviors.interaction.click.subscribe((event) => {
-        console.log('👆 Click event detected:', event);
-        
-        setTimeout(() => {
-          // Try multiple approaches
-          let selectionInfo = extractSelectionFromEvent(plugin);
+      try {
+        // Method 2: Click events with better timing
+        const clickSub = plugin.behaviors.interaction.click.subscribe((event) => {
+          console.log('👆 Click event detected:', event);
           
-          if (!selectionInfo) {
-            console.log('🔄 Trying interactivity manager approach...');
-            selectionInfo = extractSelectionFromInteractivity(plugin);
-          }
-          
-          console.log('👆 Final click-based selection info:', selectionInfo);
-          
-          if (selectionInfo) {
-            setCurrentSelection(selectionInfo);
-            onSelectionChange?.(selectionInfo);
-            console.log('✨ Click selection updated:', selectionInfo.description);
-          } else {
-            console.log('🚫 No valid selection from click');
-            // Don't clear selection immediately on failed extraction
-          }
-        }, 100); // Slightly longer delay
-      });
+          // Use multiple timeouts to handle different processing delays
+          [50, 150, 300].forEach((delay, index) => {
+            setTimeout(() => {
+              const selectionInfo = extractSelectionFromState(plugin);
+              if (selectionInfo) {
+                setCurrentSelection(selectionInfo);
+                onSelectionChange?.(selectionInfo);
+                console.log(`✨ Click selection updated (attempt ${index + 1}):`, selectionInfo.description);
+              } else if (index === 0) {
+                console.log(`🔄 No selection on attempt ${index + 1}, will retry...`);
+              }
+            }, delay);
+          });
+        });
+        subscriptions.push(clickSub);
+      } catch (error) {
+        console.log('⚠️ Could not subscribe to click events:', error);
+      }
 
-      // Method 3: Monitor hover events as backup
-      const hoverSubscription = plugin.behaviors.interaction.hover.subscribe((event) => {
-        console.log('🖱️ Hover event detected:', event);
-        
-        // Only extract on hover if we don't have a current selection
-        if (!currentSelection) {
-          const selectionInfo = extractSelectionFromInteractivity(plugin);
-          if (selectionInfo) {
-            console.log('🖱️ Hover selection info:', selectionInfo);
-            // Don't set as current selection, just log for debugging
-          }
-        }
-      });
+      try {
+        // Method 3: Monitor interactivity state changes
+        const interactivitySub = plugin.managers.interactivity.events.changed.subscribe(() => {
+          console.log('🎮 Interactivity changed event!');
+          setTimeout(() => {
+            const selectionInfo = extractSelectionFromState(plugin);
+            if (selectionInfo) {
+              setCurrentSelection(selectionInfo);
+              onSelectionChange?.(selectionInfo);
+              console.log('✨ Selection updated from interactivity:', selectionInfo.description);
+            }
+          }, 50);
+        });
+        subscriptions.push(interactivitySub);
+      } catch (error) {
+        console.log('⚠️ Could not subscribe to interactivity events:', error);
+      }
 
-      console.log('✅ Selection monitoring setup complete');
+      // Store all subscriptions
+      selectionSubscriptionRef.current = subscriptions;
+
+      console.log('✅ Selection monitoring setup complete with', subscriptions.length, 'subscriptions');
 
       return () => {
         console.log('🧹 Cleaning up selection monitoring');
-        if (selectionSubscriptionRef.current) {
-          selectionSubscriptionRef.current.unsubscribe();
-        }
-        clickSubscription.unsubscribe();
-        hoverSubscription.unsubscribe();
+        subscriptions.forEach(sub => {
+          try {
+            sub.unsubscribe();
+          } catch (e) {
+            console.log('⚠️ Error unsubscribing:', e);
+          }
+        });
       };
-    }, [extractSelectionFromEvent, extractSelectionFromInteractivity, onSelectionChange, currentSelection]);
+    }, [extractSelectionFromState, onSelectionChange]);
 
     // Initialize the molstar plugin
     const initializePlugin = useCallback(async () => {
       if (!containerRef.current || pluginRef.current) return;
 
       try {
-        console.log('🚀 Initializing Molstar plugin with contained UI and hidden Structure Tools...');
+        console.log('🚀 Initializing Molstar plugin with comprehensive selection support...');
         setIsLoading(true);
         const spec = createSpec();
         const plugin = await createPluginUI({
@@ -431,7 +318,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           spec
         });
         pluginRef.current = plugin;
-        console.log('✅ Molstar plugin initialized with hidden Structure Tools:', plugin);
+        console.log('✅ Molstar plugin initialized:', plugin);
         
         // Verify that essential plugin properties are available
         if (!plugin.builders) {
@@ -440,12 +327,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         console.log('✅ Plugin builders verified:', plugin.builders);
         
-        // Setup selection monitoring
-        setupSelectionMonitoring(plugin);
+        // Setup selection monitoring after plugin is fully ready
+        setTimeout(() => {
+          setupSelectionMonitoring(plugin);
+        }, 1000); // Give plugin time to fully initialize
         
         setIsInitialized(true);
         onReady?.(plugin);
-        console.log('🎉 Plugin setup complete with State Tree and Sequence panels only');
+        console.log('🎉 Plugin setup complete with enhanced selection tracking');
       } catch (error) {
         console.error('❌ Failed to initialize molstar plugin:', error);
         onError?.(error as Error);
@@ -848,7 +737,21 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return () => {
         console.log('🧹 Cleaning up MolstarViewer component');
         if (selectionSubscriptionRef.current) {
-          selectionSubscriptionRef.current.unsubscribe();
+          if (Array.isArray(selectionSubscriptionRef.current)) {
+            selectionSubscriptionRef.current.forEach(sub => {
+              try {
+                sub.unsubscribe();
+              } catch (e) {
+                console.log('⚠️ Error during cleanup:', e);
+              }
+            });
+          } else {
+            try {
+              selectionSubscriptionRef.current.unsubscribe();
+            } catch (e) {
+              console.log('⚠️ Error during cleanup:', e);
+            }
+          }
         }
         if (pluginRef.current) {
           pluginRef.current.dispose();
