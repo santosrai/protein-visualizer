@@ -10,6 +10,8 @@ import { PluginStateObject } from 'molstar/lib/mol-plugin-state/objects';
 import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
 import { StructureElement, StructureProperties, Structure } from 'molstar/lib/mol-model/structure';
+import { Script } from 'molstar/lib/mol-script/script';
+import { StructureSelection } from 'molstar/lib/mol-model/structure/query';
 import { Loci } from 'molstar/lib/mol-model/loci';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
@@ -37,6 +39,12 @@ export interface SelectionInfo {
   coordinates?: { x: number; y: number; z: number };
 }
 
+export interface ResidueRangeQuery {
+  chainId: string;
+  startResidue: number;
+  endResidue: number;
+}
+
 export interface ViewerControls {
   loadStructure: (url: string, format?: string) => Promise<void>;
   resetView: () => void;
@@ -54,6 +62,8 @@ export interface ViewerControls {
   clearHighlights: () => Promise<void>;
   getStructureInfo: () => Promise<string>;
   getCurrentSelection: () => SelectionInfo | null;
+  selectResidueRange: (query: ResidueRangeQuery) => Promise<string>;
+  clearSelection: () => Promise<void>;
 }
 
 const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
@@ -372,6 +382,104 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         setIsLoading(false);
       }
     }, [onError, setupSelectionMonitoring]);
+
+    // Select residue range
+    const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
+      const plugin = pluginRef.current;
+      if (!plugin) {
+        return 'No plugin available';
+      }
+
+      try {
+        console.log(`🎯 Selecting residue range: chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue}`);
+
+        // Get the structure
+        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        if (structures.length === 0) {
+          throw new Error('No structure loaded');
+        }
+
+        const structure = structures[0].obj?.data;
+        if (!structure) {
+          throw new Error('Structure data not available');
+        }
+
+        // Create selection query using Molstar's selection language
+        const selection = Script.getStructureSelection(Q => 
+          Q.struct.generator.atomGroups({
+            'chain-test': Q.core.rel.eq([
+              Q.struct.atomProperty.macromolecular.auth_asym_id(), 
+              query.chainId
+            ]),
+            'residue-test': Q.core.rel.inRange([
+              Q.struct.atomProperty.macromolecular.auth_seq_id(),
+              query.startResidue,
+              query.endResidue
+            ])
+          }), structure);
+
+        // Apply the selection
+        const loci = StructureSelection.toLociWithSourceUnits(selection);
+        
+        // Add selection to the manager
+        await plugin.managers.structure.selection.fromLoci('add', loci);
+
+        // Process and store the selection info
+        if (loci.elements && loci.elements.length > 0) {
+          // Count total residues and atoms
+          let totalAtoms = 0;
+          let residueCount = 0;
+          
+          for (const element of loci.elements) {
+            totalAtoms += element.indices.length;
+          }
+
+          // Estimate residue count (rough approximation)
+          residueCount = Math.ceil(totalAtoms / 10); // Rough estimate
+
+          const selectionInfo: SelectionInfo = {
+            chainId: query.chainId,
+            residueNumber: query.startResidue,
+            atomCount: totalAtoms,
+            description: `Chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue} (${residueCount} residues, ${totalAtoms} atoms)`
+          };
+
+          setCurrentSelection(selectionInfo);
+          onSelectionChange?.(selectionInfo);
+
+          console.log('✅ Residue range selected successfully');
+          return `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId}. Total: ${residueCount} residues, ${totalAtoms} atoms.`;
+        } else {
+          throw new Error('No atoms found in the specified range');
+        }
+
+      } catch (error) {
+        console.error('❌ Failed to select residue range:', error);
+        throw error;
+      }
+    }, [onSelectionChange]);
+
+    // Clear selection
+    const clearSelection = useCallback(async (): Promise<void> => {
+      const plugin = pluginRef.current;
+      if (!plugin) return;
+
+      try {
+        console.log('🧹 Clearing selection');
+        
+        // Clear selection manager
+        await plugin.managers.structure.selection.clear();
+        
+        // Clear current selection state
+        setCurrentSelection(null);
+        onSelectionChange?.(null);
+        
+        console.log('✅ Selection cleared');
+      } catch (error) {
+        console.error('❌ Failed to clear selection:', error);
+        throw error;
+      }
+    }, [onSelectionChange]);
 
     // Reset camera view
     const resetView = useCallback(() => {
@@ -713,11 +821,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       highlightChain,
       clearHighlights,
       getStructureInfo,
-      getCurrentSelection
+      getCurrentSelection,
+      selectResidueRange,
+      clearSelection
     }), [
       loadStructure, resetView, zoomIn, zoomOut, setRepresentation, getPlugin,
       showWaterMolecules, hideWaterMolecules, hideLigands, focusOnChain, getSelectionInfo,
-      showOnlySelected, highlightChain, clearHighlights, getStructureInfo, getCurrentSelection
+      showOnlySelected, highlightChain, clearHighlights, getStructureInfo, getCurrentSelection,
+      selectResidueRange, clearSelection
     ]);
 
     // Initialize plugin on mount

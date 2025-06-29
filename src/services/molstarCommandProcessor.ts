@@ -1,4 +1,4 @@
-import { ViewerControls } from '../components/MolstarViewer';
+import { ViewerControls, ResidueRangeQuery } from '../components/MolstarViewer';
 
 export interface MolstarCommand {
   name: string;
@@ -250,6 +250,43 @@ export class MolstarCommandProcessor {
         }
       }
     });
+
+    // Add residue range selection command
+    this.commands.set('select_residue_range', {
+      name: 'select_residue_range',
+      description: 'Select residues within a specific range in a chain',
+      execute: async (viewer, params) => {
+        try {
+          if (!params || !params.chainId || !params.startResidue || !params.endResidue) {
+            return 'Invalid parameters. Required: chainId, startResidue, endResidue';
+          }
+
+          const query: ResidueRangeQuery = {
+            chainId: params.chainId,
+            startResidue: parseInt(params.startResidue),
+            endResidue: parseInt(params.endResidue)
+          };
+
+          const result = await viewer.selectResidueRange(query);
+          return result;
+        } catch (error) {
+          return `Failed to select residue range: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        }
+      }
+    });
+
+    this.commands.set('clear_selection', {
+      name: 'clear_selection',
+      description: 'Clear all current selections',
+      execute: async (viewer) => {
+        try {
+          await viewer.clearSelection();
+          return 'All selections have been cleared.';
+        } catch (error) {
+          return 'Failed to clear selection.';
+        }
+      }
+    });
   }
 
   private getAminoAcidInfo(residueName: string): { type: string; properties: string[]; description: string } | null {
@@ -304,6 +341,39 @@ export class MolstarCommandProcessor {
     
     if (input.toLowerCase().includes('analyze selection') || input.toLowerCase().includes('analyze my selection')) {
       return { command: 'analyze_selection' };
+    }
+
+    if (input.toLowerCase().includes('clear selection')) {
+      return { command: 'clear_selection' };
+    }
+
+    // Parse residue range selection commands
+    // Examples: "select residues 12-200 in chain A", "select chain A residues 50 to 150"
+    const residueRangeRegex = /select.*(?:residues?)\s*(\d+)[\s\-to]+(\d+).*(?:chain|in)\s*([A-Z])/i;
+    const match = input.match(residueRangeRegex);
+    if (match) {
+      return {
+        command: 'select_residue_range',
+        params: {
+          chainId: match[3],
+          startResidue: match[1],
+          endResidue: match[2]
+        }
+      };
+    }
+
+    // Alternative format: "select chain A residues 12-200"
+    const altRangeRegex = /select.*chain\s*([A-Z]).*(?:residues?)\s*(\d+)[\s\-to]+(\d+)/i;
+    const altMatch = input.match(altRangeRegex);
+    if (altMatch) {
+      return {
+        command: 'select_residue_range',
+        params: {
+          chainId: altMatch[1],
+          startResidue: altMatch[2],
+          endResidue: altMatch[3]
+        }
+      };
     }
     
     if (this.commands.has(command)) {

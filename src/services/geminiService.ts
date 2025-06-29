@@ -151,6 +151,20 @@ Available commands you can suggest or execute:
 - "highlight_chain [chain_id]" - Highlight specific chain
 - "clear_highlights" - Remove all highlights
 - "show_structure_info" - Display structure information
+- "select_residue_range" - Select residues within a specific range (e.g., "select residues 12-200 in chain A")
+- "clear_selection" - Clear all current selections
+
+NEW FEATURE: Residue Range Selection
+You can now help users select specific residue ranges within chains. Examples:
+- "select residues 12-200 in chain A"
+- "select chain A residues 50 to 150"  
+- "show me residues 100-300 from chain B"
+
+This is useful for:
+- Analyzing specific protein domains
+- Focusing on regions of interest
+- Comparing similar regions across chains
+- Studying loop regions or secondary structures
 
 Current context:
 - Structure: ${context.structureName || 'Unknown'}
@@ -164,6 +178,9 @@ IMPORTANT: When users ask about "what is selected", "analyze selection", or ques
 - Secondary structure context if relevant
 - Functional significance if known
 - Chemical properties of the atom/residue
+
+When users request residue range selections, suggest using the new selection commands like:
+[COMMAND: select_residue_range] with appropriate parameters.
 
 Respond naturally to user queries and suggest appropriate commands. If a user asks something that requires a specific action, include the command in your response using the format: [COMMAND: command_name].
 
