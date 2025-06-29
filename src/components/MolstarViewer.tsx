@@ -236,8 +236,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
         // Try to get the current loci (location of interaction)
         const highlights = interactivity.lociHighlights;
-        if (!highlights || highlights.size === 0) {
-          console.log('❌ No highlights available');
+        
+        // Check if highlights is a Map instance and has content
+        if (!highlights || !(highlights instanceof Map) || highlights.size === 0) {
+          console.log('❌ No highlights available or not a Map');
           return null;
         }
 
