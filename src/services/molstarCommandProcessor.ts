@@ -189,6 +189,94 @@ export class MolstarCommandProcessor {
         }
       }
     });
+
+    // Add new selection-focused commands
+    this.commands.set('what_is_selected', {
+      name: 'what_is_selected',
+      description: 'Get detailed information about current selection',
+      execute: async (viewer) => {
+        try {
+          const selection = viewer.getCurrentSelection();
+          if (!selection) {
+            return 'Nothing is currently selected. Click on an atom or residue in the 3D viewer to select it.';
+          }
+          
+          let response = `**Selection Analysis:**\n\n`;
+          response += `${selection.description}\n\n`;
+          
+          if (selection.residueName) {
+            response += `**Residue Information:**\n`;
+            response += `- Name: ${selection.residueName}\n`;
+            response += `- Number: ${selection.residueNumber}\n`;
+            response += `- Chain: ${selection.chainId}\n`;
+            
+            // Add amino acid properties
+            const aaInfo = this.getAminoAcidInfo(selection.residueName);
+            if (aaInfo) {
+              response += `- Type: ${aaInfo.type}\n`;
+              response += `- Properties: ${aaInfo.properties.join(', ')}\n`;
+              response += `- Description: ${aaInfo.description}\n`;
+            }
+          }
+          
+          if (selection.atomName && selection.elementType) {
+            response += `\n**Atom Information:**\n`;
+            response += `- Atom Name: ${selection.atomName}\n`;
+            response += `- Element: ${selection.elementType}\n`;
+          }
+          
+          if (selection.coordinates) {
+            response += `\n**Position:**\n`;
+            response += `- X: ${selection.coordinates.x.toFixed(3)} Å\n`;
+            response += `- Y: ${selection.coordinates.y.toFixed(3)} Å\n`;
+            response += `- Z: ${selection.coordinates.z.toFixed(3)} Å\n`;
+          }
+          
+          return response;
+        } catch (error) {
+          return 'Failed to analyze selection.';
+        }
+      }
+    });
+
+    this.commands.set('analyze_selection', {
+      name: 'analyze_selection',
+      description: 'Provide detailed analysis of the selected residue/atom',
+      execute: async (viewer) => {
+        try {
+          return await this.commands.get('what_is_selected')!.execute(viewer);
+        } catch (error) {
+          return 'Failed to analyze selection.';
+        }
+      }
+    });
+  }
+
+  private getAminoAcidInfo(residueName: string): { type: string; properties: string[]; description: string } | null {
+    const aminoAcids: { [key: string]: { type: string; properties: string[]; description: string } } = {
+      'ALA': { type: 'Nonpolar', properties: ['Hydrophobic', 'Small'], description: 'Alanine - Small, nonpolar side chain' },
+      'ARG': { type: 'Basic', properties: ['Positively charged', 'Polar', 'Large'], description: 'Arginine - Positively charged, often involved in binding' },
+      'ASN': { type: 'Polar', properties: ['Uncharged polar', 'Hydrophilic'], description: 'Asparagine - Can form hydrogen bonds' },
+      'ASP': { type: 'Acidic', properties: ['Negatively charged', 'Polar'], description: 'Aspartic acid - Negatively charged at physiological pH' },
+      'CYS': { type: 'Polar', properties: ['Can form disulfide bonds', 'Sulfur-containing'], description: 'Cysteine - Can form disulfide bridges' },
+      'GLN': { type: 'Polar', properties: ['Uncharged polar', 'Hydrophilic'], description: 'Glutamine - Longer polar side chain, forms hydrogen bonds' },
+      'GLU': { type: 'Acidic', properties: ['Negatively charged', 'Polar'], description: 'Glutamic acid - Negatively charged, important for protein structure' },
+      'GLY': { type: 'Nonpolar', properties: ['Flexible', 'Smallest'], description: 'Glycine - Provides flexibility, no side chain' },
+      'HIS': { type: 'Basic', properties: ['Can be charged', 'Aromatic'], description: 'Histidine - Can be protonated, important in enzyme active sites' },
+      'ILE': { type: 'Nonpolar', properties: ['Hydrophobic', 'Branched'], description: 'Isoleucine - Hydrophobic, branched aliphatic side chain' },
+      'LEU': { type: 'Nonpolar', properties: ['Hydrophobic', 'Branched'], description: 'Leucine - Hydrophobic, common in protein cores' },
+      'LYS': { type: 'Basic', properties: ['Positively charged', 'Long'], description: 'Lysine - Positively charged, often on protein surfaces' },
+      'MET': { type: 'Nonpolar', properties: ['Hydrophobic', 'Sulfur-containing'], description: 'Methionine - Contains sulfur, often buried in protein core' },
+      'PHE': { type: 'Nonpolar', properties: ['Aromatic', 'Hydrophobic', 'Large'], description: 'Phenylalanine - Aromatic, important for protein structure' },
+      'PRO': { type: 'Nonpolar', properties: ['Rigid', 'Ring structure'], description: 'Proline - Rigid structure, introduces kinks in proteins' },
+      'SER': { type: 'Polar', properties: ['Hydroxyl group', 'Can be phosphorylated'], description: 'Serine - Small polar residue, important for regulation' },
+      'THR': { type: 'Polar', properties: ['Hydroxyl group', 'Can be phosphorylated'], description: 'Threonine - Polar with hydroxyl group' },
+      'TRP': { type: 'Nonpolar', properties: ['Aromatic', 'Large', 'Indole ring'], description: 'Tryptophan - Largest amino acid, aromatic indole ring' },
+      'TYR': { type: 'Polar', properties: ['Aromatic', 'Hydroxyl group'], description: 'Tyrosine - Aromatic with hydroxyl group, can form hydrogen bonds' },
+      'VAL': { type: 'Nonpolar', properties: ['Hydrophobic', 'Branched'], description: 'Valine - Hydrophobic, branched aliphatic side chain' }
+    };
+
+    return aminoAcids[residueName] || null;
   }
 
   async executeCommand(commandName: string, params?: any): Promise<string> {
@@ -208,6 +296,15 @@ export class MolstarCommandProcessor {
     // Parse commands like "zoom_chain A" or "highlight_chain B"
     const parts = input.trim().split(' ');
     const command = parts[0];
+    
+    // Handle selection-related queries
+    if (input.toLowerCase().includes('what is selected') || input.toLowerCase().includes('what\'s selected')) {
+      return { command: 'what_is_selected' };
+    }
+    
+    if (input.toLowerCase().includes('analyze selection') || input.toLowerCase().includes('analyze my selection')) {
+      return { command: 'analyze_selection' };
+    }
     
     if (this.commands.has(command)) {
       const params: any = {};

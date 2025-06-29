@@ -1,5 +1,5 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import MolstarViewer, { ViewerControls } from './components/MolstarViewer';
+import MolstarViewer, { ViewerControls, SelectionInfo } from './components/MolstarViewer';
 import ChatInterface from './components/ChatInterface';
 import ProteinSelector from './components/ProteinSelector';
 import FileUploader from './components/FileUploader';
@@ -22,6 +22,7 @@ function App() {
   const [currentStructureName, setCurrentStructureName] = useState<string>('2PGH');
   const [viewerReady, setViewerReady] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
 
   // Check for API key on mount
   useEffect(() => {
@@ -39,6 +40,7 @@ function App() {
       setCurrentStructureName(proteinId);
       await viewerRef.current.loadStructure(`/data/${file}`);
       setIsStructureLoaded(true);
+      setCurrentSelection(null); // Clear selection when loading new structure
       toast({
         title: "Structure Loaded",
         description: `Successfully loaded ${proteinId}`,
@@ -66,6 +68,7 @@ function App() {
       setCurrentStructureName(filename);
       await viewerRef.current.loadStructure(url);
       setIsStructureLoaded(true);
+      setCurrentSelection(null); // Clear selection when loading new structure
       
       // Clean up the blob URL
       URL.revokeObjectURL(url);
@@ -116,6 +119,17 @@ function App() {
   // Handle API key updates
   const handleApiKeyUpdate = useCallback((hasKey: boolean) => {
     setHasApiKey(hasKey);
+  }, []);
+
+  // Handle selection changes
+  const handleSelectionChange = useCallback((selectionInfo: SelectionInfo | null) => {
+    setCurrentSelection(selectionInfo);
+    if (selectionInfo) {
+      toast({
+        title: "Selection Updated",
+        description: selectionInfo.description,
+      });
+    }
   }, []);
 
   // Initialize with 2PGH as default protein
@@ -191,6 +205,14 @@ function App() {
                   <div className="text-center">
                     <div className="text-lg font-semibold text-white">{currentStructureName}</div>
                     <div className="text-sm text-gray-400 capitalize">{currentRepresentation} view</div>
+                    {currentSelection && (
+                      <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded">
+                        <div className="text-xs text-green-300 font-medium">Selected:</div>
+                        <div className="text-sm text-green-200">
+                          {currentSelection.residueName} {currentSelection.residueNumber} (Chain {currentSelection.chainId})
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -275,6 +297,7 @@ function App() {
                       variant: "destructive",
                     });
                   }}
+                  onSelectionChange={handleSelectionChange}
                 />
                 
                 {/* Welcome message when no structure is loaded */}

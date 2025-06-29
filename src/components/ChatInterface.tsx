@@ -22,7 +22,7 @@ import {
 import { cn } from '@/lib/utils';
 import { geminiService } from '../services/geminiService';
 import { molstarCommandProcessor } from '../services/molstarCommandProcessor';
-import { ViewerControls } from './MolstarViewer';
+import { ViewerControls, SelectionInfo } from './MolstarViewer';
 import SettingsDialog from './SettingsDialog';
 
 interface ChatMessage {
@@ -47,8 +47,8 @@ const QUICK_COMMANDS = [
   "Switch to surface view", 
   "Reset camera",
   "Show structure info",
-  "Hide ligands",
-  "Highlight chain A"
+  "What is selected?",
+  "Analyze selection"
 ];
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -62,7 +62,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     {
       id: '1',
       type: 'system',
-      content: 'Welcome! I can help you interact with the 3D protein structure. Try asking me to "show water molecules", "hide water molecules", or "switch to surface view".',
+      content: 'Welcome! I can help you interact with the 3D protein structure. Try selecting a residue in the viewer and ask me "What is selected?" or "Analyze my selection".',
       timestamp: new Date()
     }
   ]);
@@ -70,6 +70,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [apiKeyStatus, setApiKeyStatus] = useState({ hasKey: false, isValid: false, source: 'none' });
+  const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -102,6 +103,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       molstarCommandProcessor.setViewer(viewerRef.current);
     }
   }, [viewerRef.current]);
+
+  // Monitor selection changes
+  useEffect(() => {
+    const checkSelection = () => {
+      if (viewerRef.current) {
+        const selection = viewerRef.current.getCurrentSelection();
+        setCurrentSelection(selection);
+      }
+    };
+
+    // Check selection periodically
+    const interval = setInterval(checkSelection, 1000);
+    return () => clearInterval(interval);
+  }, [viewerRef]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -159,11 +174,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           commands: [directCommand.command]
         });
       } else if (hasApiKey && apiKeyStatus.isValid) {
-        // Process with AI
+        // Process with AI including selection context
         const context = {
           structureName: currentStructure,
           representation: currentRepresentation,
-          hasStructure: isStructureLoaded
+          hasStructure: isStructureLoaded,
+          currentSelection: currentSelection ? {
+            description: currentSelection.description,
+            residueName: currentSelection.residueName,
+            residueNumber: currentSelection.residueNumber,
+            chainId: currentSelection.chainId,
+            atomName: currentSelection.atomName,
+            elementType: currentSelection.elementType,
+            atomCount: currentSelection.atomCount
+          } : null
         };
 
         try {
@@ -269,6 +293,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </Badge>
           )}
           
+          {/* Selection Badge */}
+          {currentSelection && (
+            <Badge variant="outline" className="text-xs bg-green-500/20 text-green-300 border-green-500/30">
+              {currentSelection.residueName} {currentSelection.residueNumber} (Chain {currentSelection.chainId})
+            </Badge>
+          )}
+          
           {/* API Status Badge */}
           <Badge 
             variant="outline" 
@@ -312,6 +343,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                 ? "Your API key appears to be invalid. Please check it in Settings."
                 : "Configure your Gemini API key in Settings to enable AI features, or use direct commands below."
               }
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Selection Info */}
+        {currentSelection && (
+          <Alert className="bg-green-500/10 border-green-500/30 flex-shrink-0">
+            <Lightbulb className="h-4 w-4 text-green-400" />
+            <AlertDescription className="text-green-300 text-sm">
+              <strong>Current Selection:</strong> {currentSelection.description}
+              <br />
+              <span className="text-xs">Ask me questions about this selection!</span>
             </AlertDescription>
           </Alert>
         )}

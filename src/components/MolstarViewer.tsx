@@ -21,6 +21,18 @@ export interface MolstarViewerProps {
   className?: string;
   onReady?: (plugin: PluginContext) => void;
   onError?: (error: Error) => void;
+  onSelectionChange?: (selectionInfo: SelectionInfo | null) => void;
+}
+
+export interface SelectionInfo {
+  residueName?: string;
+  residueNumber?: number;
+  chainId?: string;
+  atomName?: string;
+  atomCount?: number;
+  elementType?: string;
+  description: string;
+  coordinates?: { x: number; y: number; z: number };
 }
 
 export interface ViewerControls {
@@ -39,14 +51,16 @@ export interface ViewerControls {
   highlightChain: (chainId: string) => Promise<void>;
   clearHighlights: () => Promise<void>;
   getStructureInfo: () => Promise<string>;
+  getCurrentSelection: () => SelectionInfo | null;
 }
 
 const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
-  ({ className, onReady, onError }, ref) => {
+  ({ className, onReady, onError, onSelectionChange }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const pluginRef = useRef<PluginContext | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isInitialized, setIsInitialized] = useState(false);
+    const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
     const waterRepresentationRef = useRef<string | null>(null);
 
     // Create the plugin specification with minimal UI
@@ -74,6 +88,125 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return spec;
     }, []);
 
+    // Enhanced selection information extraction
+    const extractSelectionInfo = useCallback((plugin: PluginContext): SelectionInfo | null => {
+      try {
+        if (!plugin.managers?.structure?.selection) {
+          return null;
+        }
+
+        const selection = plugin.managers.structure.selection;
+        const entries = selection.entries;
+
+        if (!entries || entries.length === 0) {
+          return null;
+        }
+
+        // Get the first selection entry for detailed analysis
+        const entry = entries[0];
+        if (!entry || !entry.selection) {
+          return null;
+        }
+
+        // Try to extract detailed information from the selection
+        const loci = entry.selection;
+        
+        // Initialize selection info
+        let selectionInfo: SelectionInfo = {
+          description: `Selection contains ${entries.length} item(s)`,
+          atomCount: entries.length
+        };
+
+        // Try to get more specific information if available
+        if (loci && loci.kind === 'structure-loci') {
+          const structureLoci = loci;
+          
+          // Extract structure information
+          if (structureLoci.structure && structureLoci.elements) {
+            const structure = structureLoci.structure;
+            const elements = structureLoci.elements;
+            
+            // Get model data
+            const model = structure.models[0];
+            if (model && model.atomicHierarchy) {
+              const hierarchy = model.atomicHierarchy;
+              
+              // Get first element for detailed info
+              for (let i = 0; i < elements.length; i++) {
+                const element = elements[i];
+                if (element.indices && element.indices.length > 0) {
+                  const atomIndex = element.indices[0];
+                  
+                  // Extract atom information
+                  if (hierarchy.atoms && atomIndex < hierarchy.atoms._rowCount) {
+                    // Get residue information
+                    const residueIndex = hierarchy.atoms.residue_index.value(atomIndex);
+                    const chainIndex = hierarchy.residues.chain_index.value(residueIndex);
+                    
+                    // Get atom name
+                    const atomName = hierarchy.atoms.label_atom_id.value(atomIndex);
+                    
+                    // Get residue name and number
+                    const residueName = hierarchy.residues.label_comp_id.value(residueIndex);
+                    const residueNumber = hierarchy.residues.label_seq_id.value(residueIndex);
+                    
+                    // Get chain ID
+                    const chainId = hierarchy.chains.label_asym_id.value(chainIndex);
+                    
+                    // Get element type
+                    const elementType = hierarchy.atoms.type_symbol.value(atomIndex);
+                    
+                    // Get coordinates if available
+                    let coordinates;
+                    if (model.atomicConformation) {
+                      const x = model.atomicConformation.x.value(atomIndex);
+                      const y = model.atomicConformation.y.value(atomIndex);
+                      const z = model.atomicConformation.z.value(atomIndex);
+                      coordinates = { x, y, z };
+                    }
+                    
+                    selectionInfo = {
+                      residueName,
+                      residueNumber,
+                      chainId,
+                      atomName,
+                      elementType,
+                      coordinates,
+                      atomCount: elements.reduce((count, el) => count + (el.indices?.length || 0), 0),
+                      description: `Selected: ${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
+                    };
+                    
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        return selectionInfo;
+      } catch (error) {
+        console.error('Error extracting selection info:', error);
+        return null;
+      }
+    }, []);
+
+    // Setup selection change listener
+    const setupSelectionListener = useCallback((plugin: PluginContext) => {
+      const handleSelectionChange = () => {
+        const selectionInfo = extractSelectionInfo(plugin);
+        setCurrentSelection(selectionInfo);
+        onSelectionChange?.(selectionInfo);
+      };
+
+      // Listen for selection changes
+      plugin.managers.structure.selection.events.changed.subscribe(handleSelectionChange);
+      
+      return () => {
+        plugin.managers.structure.selection.events.changed.unsubscribe(handleSelectionChange);
+      };
+    }, [extractSelectionInfo, onSelectionChange]);
+
     // Initialize the molstar plugin
     const initializePlugin = useCallback(async () => {
       if (!containerRef.current || pluginRef.current) return;
@@ -87,6 +220,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           spec
         });
         pluginRef.current = plugin;
+        
+        // Setup selection listener
+        setupSelectionListener(plugin);
+        
         setIsInitialized(true);
         onReady?.(plugin);
       } catch (error) {
@@ -95,7 +232,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       } finally {
         setIsLoading(false);
       }
-    }, [createSpec, onReady, onError]);
+    }, [createSpec, onReady, onError, setupSelectionListener]);
 
     // Load structure from URL
     const loadStructure = useCallback(async (url: string, format: string = 'pdb') => {
@@ -110,6 +247,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           ref: pluginRef.current.state.data.tree.root.ref
         });
         waterRepresentationRef.current = null;
+        setCurrentSelection(null);
 
         // Download and load the structure
         const data = await pluginRef.current.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
@@ -306,55 +444,53 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // Get selection information - Fixed implementation
+    // Get selection information - Enhanced implementation
     const getSelectionInfo = useCallback(async (): Promise<string> => {
       if (!pluginRef.current) return 'No plugin available';
 
       try {
-        // Check if there are any structures loaded
-        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
-        if (structures.length === 0) {
-          return 'No structure loaded. Please load a protein structure first.';
-        }
-
-        // Check if the selection manager exists
-        if (!pluginRef.current.managers || !pluginRef.current.managers.structure) {
-          return 'Selection manager not available. Please ensure the structure is fully loaded.';
-        }
-
-        // Get current selection from the structure selection manager
-        const selection = pluginRef.current.managers.structure.selection.entries;
+        const selectionInfo = extractSelectionInfo(pluginRef.current);
         
-        if (!selection || selection.length === 0) {
+        if (!selectionInfo) {
           return 'No atoms or residues are currently selected. Click on the protein structure to make a selection, then ask again.';
         }
 
-        // Get selection details
-        let selectionInfo = `Current selection contains ${selection.length} item(s):\n\n`;
+        let info = `Current Selection Details:\n\n`;
+        info += `${selectionInfo.description}\n\n`;
         
-        for (let i = 0; i < Math.min(selection.length, 5); i++) {
-          const entry = selection[i];
-          if (entry && entry.selection) {
-            selectionInfo += `• Selection ${i + 1}: Structure element\n`;
-          }
+        if (selectionInfo.residueName) {
+          info += `• Residue: ${selectionInfo.residueName}\n`;
         }
-        
-        if (selection.length > 5) {
-          selectionInfo += `... and ${selection.length - 5} more items`;
+        if (selectionInfo.residueNumber) {
+          info += `• Residue Number: ${selectionInfo.residueNumber}\n`;
+        }
+        if (selectionInfo.chainId) {
+          info += `• Chain: ${selectionInfo.chainId}\n`;
+        }
+        if (selectionInfo.atomName) {
+          info += `• Atom: ${selectionInfo.atomName}\n`;
+        }
+        if (selectionInfo.elementType) {
+          info += `• Element: ${selectionInfo.elementType}\n`;
+        }
+        if (selectionInfo.atomCount) {
+          info += `• Total Atoms: ${selectionInfo.atomCount}\n`;
+        }
+        if (selectionInfo.coordinates) {
+          info += `• Coordinates: (${selectionInfo.coordinates.x.toFixed(2)}, ${selectionInfo.coordinates.y.toFixed(2)}, ${selectionInfo.coordinates.z.toFixed(2)})\n`;
         }
 
-        return selectionInfo;
+        return info;
       } catch (error) {
         console.error('Failed to get selection info:', error);
-        
-        // Fallback: Check if user can make selections
-        if (pluginRef.current && pluginRef.current.canvas3d) {
-          return 'Selection system is ready. Click on atoms or residues in the 3D viewer to select them, then ask for selection info again.';
-        }
-        
         return 'Unable to access selection information. Please ensure a structure is loaded and try clicking on the protein to select parts of it.';
       }
-    }, []);
+    }, [extractSelectionInfo]);
+
+    // Get current selection
+    const getCurrentSelection = useCallback(() => {
+      return currentSelection;
+    }, [currentSelection]);
 
     // Show only selected region
     const showOnlySelected = useCallback(async () => {
@@ -451,11 +587,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       showOnlySelected,
       highlightChain,
       clearHighlights,
-      getStructureInfo
+      getStructureInfo,
+      getCurrentSelection
     }), [
       loadStructure, resetView, zoomIn, zoomOut, setRepresentation, getPlugin,
       showWaterMolecules, hideWaterMolecules, hideLigands, focusOnChain, getSelectionInfo,
-      showOnlySelected, highlightChain, clearHighlights, getStructureInfo
+      showOnlySelected, highlightChain, clearHighlights, getStructureInfo, getCurrentSelection
     ]);
 
     // Initialize plugin on mount
@@ -516,6 +653,24 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             >
               <ZoomOut className="h-4 w-4" />
             </Button>
+          </div>
+        )}
+
+        {/* Selection info overlay */}
+        {currentSelection && (
+          <div className="absolute bottom-4 left-4 right-4">
+            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm">
+              <div className="p-3">
+                <p className="text-white text-sm font-medium">
+                  {currentSelection.description}
+                </p>
+                {currentSelection.coordinates && (
+                  <p className="text-gray-400 text-xs mt-1">
+                    Position: ({currentSelection.coordinates.x.toFixed(2)}, {currentSelection.coordinates.y.toFixed(2)}, {currentSelection.coordinates.z.toFixed(2)})
+                  </p>
+                )}
+              </div>
+            </Card>
           </div>
         )}
       </Card>

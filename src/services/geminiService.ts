@@ -125,8 +125,17 @@ class GeminiService {
       throw new Error('Gemini API key not configured. Please add your API key in Settings.');
     }
 
+    const selectionContext = context.currentSelection ? `
+Current Selection Information:
+- Description: ${context.currentSelection.description}
+- Residue: ${context.currentSelection.residueName} ${context.currentSelection.residueNumber}
+- Chain: ${context.currentSelection.chainId}
+- Atom: ${context.currentSelection.atomName} (${context.currentSelection.elementType})
+- Total atoms in selection: ${context.currentSelection.atomCount}
+` : 'No current selection.';
+
     const systemPrompt = `You are an AI assistant for a protein visualization tool powered by Molstar. 
-You can help users interact with 3D protein structures through specific commands. 
+You can help users interact with 3D protein structures through specific commands and provide detailed analysis of selected protein elements.
 
 Available commands you can suggest or execute:
 - "enable_water" - Show water molecules
@@ -147,6 +156,14 @@ Current context:
 - Structure: ${context.structureName || 'Unknown'}
 - Representation: ${context.representation || 'cartoon'}
 - Has structure loaded: ${context.hasStructure || false}
+
+${selectionContext}
+
+IMPORTANT: When users ask about "what is selected", "analyze selection", or questions about specific residues/atoms, provide detailed biological and chemical information about the selected element. Include information about:
+- Amino acid properties (hydrophobic, hydrophilic, charged, polar, etc.)
+- Secondary structure context if relevant
+- Functional significance if known
+- Chemical properties of the atom/residue
 
 Respond naturally to user queries and suggest appropriate commands. If a user asks something that requires a specific action, include the command in your response using the format: [COMMAND: command_name].
 
