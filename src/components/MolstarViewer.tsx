@@ -323,42 +323,45 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Load structure from URL
     const loadStructure = useCallback(async (url: string, format: string = 'pdb') => {
-      if (!pluginRef.current) return;
+      // Capture plugin reference at the start to prevent null reference errors
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log(`📁 Loading structure from: ${url}`);
         setIsLoading(true);
         
         // Clear existing structures and reset selection
-        await PluginCommands.State.RemoveObject(pluginRef.current, { 
-          state: pluginRef.current.state.data, 
-          ref: pluginRef.current.state.data.tree.root.ref
+        await PluginCommands.State.RemoveObject(plugin, { 
+          state: plugin.state.data, 
+          ref: plugin.state.data.tree.root.ref
         });
         waterRepresentationRef.current = null;
         setCurrentSelection(null);
         console.log('🧹 Cleared existing structures and selection');
 
         // Download and load the structure
-        const data = await pluginRef.current.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
-        const trajectory = await pluginRef.current.builders.structure.parseTrajectory(data, format as any);
-        const model = await pluginRef.current.builders.structure.createModel(trajectory);
-        const structure = await pluginRef.current.builders.structure.createStructure(model);
+        const data = await plugin.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
+        const trajectory = await plugin.builders.structure.parseTrajectory(data, format as any);
+        const model = await plugin.builders.structure.createModel(trajectory);
+        const structure = await plugin.builders.structure.createStructure(model);
         
         // Create default representation with interaction enabled
-        await pluginRef.current.builders.structure.representation.addRepresentation(structure, {
+        await plugin.builders.structure.representation.addRepresentation(structure, {
           type: 'cartoon',
           color: 'chain-id'
         });
 
         // Focus the camera on the structure
-        await PluginCommands.Camera.Reset(pluginRef.current);
+        await PluginCommands.Camera.Reset(plugin);
         
         console.log('✅ Structure loaded successfully');
         
         // Re-setup selection monitoring after structure load
         setTimeout(() => {
-          if (pluginRef.current) {
-            setupSelectionMonitoring(pluginRef.current);
+          const currentPlugin = pluginRef.current;
+          if (currentPlugin) {
+            setupSelectionMonitoring(currentPlugin);
           }
         }, 500);
         
@@ -372,40 +375,45 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Reset camera view
     const resetView = useCallback(() => {
-      if (!pluginRef.current) return;
+      const plugin = pluginRef.current;
+      if (!plugin) return;
       console.log('📷 Resetting camera view');
-      PluginCommands.Camera.Reset(pluginRef.current);
+      PluginCommands.Camera.Reset(plugin);
     }, []);
 
     // Zoom in
     const zoomIn = useCallback(() => {
-      if (!pluginRef.current) return;
+      const plugin = pluginRef.current;
+      if (!plugin) return;
       console.log('🔍 Zooming in');
-      PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 20 });
+      PluginCommands.Camera.Focus(plugin, { center: Vec3.create(0, 0, 0), radius: 20 });
     }, []);
 
     // Zoom out  
     const zoomOut = useCallback(() => {
-      if (!pluginRef.current) return;
+      const plugin = pluginRef.current;
+      if (!plugin) return;
       console.log('🔍 Zooming out');
-      PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 50 });
+      PluginCommands.Camera.Focus(plugin, { center: Vec3.create(0, 0, 0), radius: 50 });
     }, []);
 
     // Set representation type
     const setRepresentation = useCallback(async (type: 'cartoon' | 'surface' | 'ball-and-stick' | 'spacefill') => {
-      if (!pluginRef.current) return;
+      // Capture plugin reference at the start to prevent null reference errors
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log(`🎨 Setting representation to: ${type}`);
         
         // Remove existing representations
-        const reprs = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
+        const reprs = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
         for (const repr of reprs) {
-          await PluginCommands.State.RemoveObject(pluginRef.current, { state: pluginRef.current.state.data, ref: repr.transform.ref });
+          await PluginCommands.State.RemoveObject(plugin, { state: plugin.state.data, ref: repr.transform.ref });
         }
 
         // Get the structure
-        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) return;
 
         // Create new representation
@@ -413,7 +421,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
                         type === 'spacefill' ? 'spacefill' : 
                         type === 'surface' ? 'molecular-surface' : 'cartoon';
 
-        await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
+        await plugin.builders.structure.representation.addRepresentation(structures[0], {
           type: reprType,
           color: 'chain-id'
         });
@@ -427,7 +435,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Show water molecules
     const showWaterMolecules = useCallback(async () => {
-      if (!pluginRef.current) return;
+      // Capture plugin reference at the start to prevent null reference errors
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log('💧 Showing water molecules');
@@ -437,11 +447,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           throw new Error('Water molecules are already visible');
         }
 
-        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) throw new Error('No structure loaded');
 
         // Create water representation with water selection
-        const waterRepr = await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
+        const waterRepr = await plugin.builders.structure.representation.addRepresentation(structures[0], {
           type: 'ball-and-stick',
           typeParams: {
             sizeFactor: 0.3,
@@ -470,15 +480,17 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Hide water molecules
     const hideWaterMolecules = useCallback(async () => {
-      if (!pluginRef.current) return;
+      // Capture plugin reference at the start to prevent null reference errors
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log('💧 Hiding water molecules');
         
         // Method 1: If we have a stored reference, use it
         if (waterRepresentationRef.current) {
-          await PluginCommands.State.RemoveObject(pluginRef.current, {
-            state: pluginRef.current.state.data,
+          await PluginCommands.State.RemoveObject(plugin, {
+            state: plugin.state.data,
             ref: waterRepresentationRef.current
           });
           waterRepresentationRef.current = null;
@@ -487,15 +499,15 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         }
 
         // Method 2: Find and remove representations with water tag
-        const representations = pluginRef.current.state.data.select(
+        const representations = plugin.state.data.select(
           StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
         );
 
         let foundWater = false;
         for (const repr of representations) {
           if (repr.transform.tags && repr.transform.tags.includes('water-representation')) {
-            await PluginCommands.State.RemoveObject(pluginRef.current, {
-              state: pluginRef.current.state.data,
+            await PluginCommands.State.RemoveObject(plugin, {
+              state: plugin.state.data,
               ref: repr.transform.ref
             });
             foundWater = true;
@@ -515,7 +527,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Hide ligands
     const hideLigands = useCallback(async () => {
-      if (!pluginRef.current) return;
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log('💊 Hide ligands functionality would be implemented here');
@@ -527,7 +540,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Focus on specific chain
     const focusOnChain = useCallback(async (chainId: string) => {
-      if (!pluginRef.current) return;
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log(`🔗 Focus on chain ${chainId} functionality would be implemented here`);
@@ -539,7 +553,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Get selection information
     const getSelectionInfo = useCallback(async (): Promise<string> => {
-      if (!pluginRef.current) {
+      const plugin = pluginRef.current;
+      if (!plugin) {
         console.log('❌ No plugin available for getSelectionInfo');
         return 'No plugin available';
       }
@@ -592,7 +607,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Show only selected region
     const showOnlySelected = useCallback(async () => {
-      if (!pluginRef.current) return;
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log('👁️ Show only selected functionality would be implemented here');
@@ -604,7 +620,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Highlight specific chain
     const highlightChain = useCallback(async (chainId: string) => {
-      if (!pluginRef.current) return;
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log(`🎯 Highlight chain ${chainId} functionality would be implemented here`);
@@ -616,11 +633,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Clear all highlights
     const clearHighlights = useCallback(async () => {
-      if (!pluginRef.current) return;
+      // Capture plugin reference at the start to prevent null reference errors
+      const plugin = pluginRef.current;
+      if (!plugin) return;
 
       try {
         console.log('🧹 Clearing highlights');
-        await PluginCommands.Interactivity.ClearHighlights(pluginRef.current);
+        await PluginCommands.Interactivity.ClearHighlights(plugin);
       } catch (error) {
         console.error('❌ Failed to clear highlights:', error);
         throw error;
@@ -629,7 +648,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Get structure information
     const getStructureInfo = useCallback(async (): Promise<string> => {
-      if (!pluginRef.current) {
+      const plugin = pluginRef.current;
+      if (!plugin) {
         console.log('❌ No plugin available for getStructureInfo');
         return 'No plugin available';
       }
@@ -637,7 +657,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       try {
         console.log('🏗️ Getting structure info');
         
-        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) {
           return 'No structure loaded.';
         }
