@@ -257,20 +257,47 @@ export class MolstarCommandProcessor {
       description: 'Select residues within a specific range in a chain',
       execute: async (viewer, params) => {
         try {
-          if (!params || !params.chainId || !params.startResidue || !params.endResidue) {
-            return 'Invalid parameters. Required: chainId, startResidue, endResidue';
+          console.log('🎯 Executing select_residue_range with params:', params);
+          
+          // More flexible parameter validation
+          if (!params) {
+            return 'No parameters provided. Please specify chainId, startResidue, and endResidue.';
+          }
+          
+          const chainId = params.chainId;
+          const startResidue = params.startResidue;
+          const endResidue = params.endResidue;
+          
+          if (!chainId) {
+            return 'Missing chainId parameter. Please specify the chain (e.g., A, B, C).';
+          }
+          
+          if (startResidue === undefined || startResidue === null || startResidue === '') {
+            return 'Missing startResidue parameter. Please specify the starting residue number.';
+          }
+          
+          if (endResidue === undefined || endResidue === null || endResidue === '') {
+            return 'Missing endResidue parameter. Please specify the ending residue number.';
           }
 
           const query: ResidueRangeQuery = {
-            chainId: params.chainId,
-            startResidue: parseInt(params.startResidue),
-            endResidue: parseInt(params.endResidue)
+            chainId: chainId.toString().toUpperCase(),
+            startResidue: parseInt(startResidue.toString()),
+            endResidue: parseInt(endResidue.toString())
           };
+
+          console.log('🎯 Parsed query:', query);
+
+          if (isNaN(query.startResidue) || isNaN(query.endResidue)) {
+            return 'Invalid residue numbers. Please provide valid numeric residue IDs.';
+          }
 
           const result = await viewer.selectResidueRange(query);
           return result;
         } catch (error) {
-          return `Failed to select residue range: ${error instanceof Error ? error.message : 'Unknown error'}`;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          console.error('❌ select_residue_range error:', errorMessage);
+          return `❌ Failed to select residue range:\n\n${errorMessage}`;
         }
       }
     });
@@ -330,6 +357,8 @@ export class MolstarCommandProcessor {
   }
 
   parseCommand(input: string): { command: string; params?: any } | null {
+    console.log('🔍 Parsing command:', input);
+    
     // Parse commands like "zoom_chain A" or "highlight_chain B"
     const parts = input.trim().split(' ');
     const command = parts[0];
@@ -347,31 +376,63 @@ export class MolstarCommandProcessor {
       return { command: 'clear_selection' };
     }
 
-    // Parse residue range selection commands
-    // Examples: "select residues 12-200 in chain A", "select chain A residues 50 to 150"
-    const residueRangeRegex = /select.*(?:residues?)\s*(\d+)[\s\-to]+(\d+).*(?:chain|in)\s*([A-Z])/i;
-    const match = input.match(residueRangeRegex);
-    if (match) {
+    // Parse residue range selection commands with multiple patterns
+    // Pattern 1: "select residues 12-200 in chain A" or "select residues 1-1 in chain A"
+    const residueRangeRegex1 = /select.*?(?:residues?)\s*(\d+)[\s\-]+(\d+).*?(?:chain|in)\s*([A-Za-z])/i;
+    const match1 = input.match(residueRangeRegex1);
+    if (match1) {
+      console.log('✅ Matched pattern 1:', match1);
       return {
         command: 'select_residue_range',
         params: {
-          chainId: match[3].toUpperCase(),
-          startResidue: match[1],
-          endResidue: match[2]
+          chainId: match1[3].toUpperCase(),
+          startResidue: match1[1],
+          endResidue: match1[2]
         }
       };
     }
 
-    // Alternative format: "select chain A residues 12-200"
-    const altRangeRegex = /select.*chain\s*([A-Z]).*(?:residues?)\s*(\d+)[\s\-to]+(\d+)/i;
-    const altMatch = input.match(altRangeRegex);
-    if (altMatch) {
+    // Pattern 2: "select chain A residues 50 to 150"
+    const residueRangeRegex2 = /select.*?chain\s*([A-Za-z]).*?(?:residues?)\s*(\d+)[\s\-to]+(\d+)/i;
+    const match2 = input.match(residueRangeRegex2);
+    if (match2) {
+      console.log('✅ Matched pattern 2:', match2);
       return {
         command: 'select_residue_range',
         params: {
-          chainId: altMatch[1].toUpperCase(),
-          startResidue: altMatch[2],
-          endResidue: altMatch[3]
+          chainId: match2[1].toUpperCase(),
+          startResidue: match2[2],
+          endResidue: match2[3]
+        }
+      };
+    }
+
+    // Pattern 3: "select residues 1 to 1 chain A" or similar variations
+    const residueRangeRegex3 = /select.*?(?:residues?)\s*(\d+)\s*(?:to|through|\-)\s*(\d+).*?chain\s*([A-Za-z])/i;
+    const match3 = input.match(residueRangeRegex3);
+    if (match3) {
+      console.log('✅ Matched pattern 3:', match3);
+      return {
+        command: 'select_residue_range',
+        params: {
+          chainId: match3[3].toUpperCase(),
+          startResidue: match3[1],
+          endResidue: match3[2]
+        }
+      };
+    }
+
+    // Pattern 4: Handle single residue selections "select residue 1 in chain A"
+    const singleResidueRegex = /select.*?(?:residue)\s*(\d+).*?(?:chain|in)\s*([A-Za-z])/i;
+    const singleMatch = input.match(singleResidueRegex);
+    if (singleMatch) {
+      console.log('✅ Matched single residue pattern:', singleMatch);
+      return {
+        command: 'select_residue_range',
+        params: {
+          chainId: singleMatch[2].toUpperCase(),
+          startResidue: singleMatch[1],
+          endResidue: singleMatch[1] // Same start and end for single residue
         }
       };
     }
@@ -386,6 +447,7 @@ export class MolstarCommandProcessor {
       return { command, params };
     }
     
+    console.log('❌ No command pattern matched for:', input);
     return null;
   }
 
