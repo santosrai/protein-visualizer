@@ -355,7 +355,7 @@ export class MolstarCommandProcessor {
       return {
         command: 'select_residue_range',
         params: {
-          chainId: match[3],
+          chainId: match[3].toUpperCase(),
           startResidue: match[1],
           endResidue: match[2]
         }
@@ -369,7 +369,7 @@ export class MolstarCommandProcessor {
       return {
         command: 'select_residue_range',
         params: {
-          chainId: altMatch[1],
+          chainId: altMatch[1].toUpperCase(),
           startResidue: altMatch[2],
           endResidue: altMatch[3]
         }
@@ -380,7 +380,7 @@ export class MolstarCommandProcessor {
       const params: any = {};
       
       if (command === 'zoom_chain' || command === 'highlight_chain') {
-        params.chainId = parts[1] || 'A';
+        params.chainId = parts[1] ? parts[1].toUpperCase() : 'A';
       }
       
       return { command, params };
