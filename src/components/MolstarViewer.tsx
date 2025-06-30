@@ -106,14 +106,20 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return spec;
     }, []);
 
-    // Extract selection information from structure element location
+    // ENHANCED: Extract selection information with better error handling
     const extractSelectionInfo = useCallback((location: StructureElement.Location): SelectionInfo | null => {
       try {
+        console.log('🔍 Extracting selection info from location:', location);
+        
         const residueName = StructureProperties.residue.label_comp_id(location);
         const residueNumber = StructureProperties.residue.label_seq_id(location);
         const chainId = StructureProperties.chain.label_asym_id(location);
         const atomName = StructureProperties.atom.label_atom_id(location);
         const elementType = StructureProperties.atom.type_symbol(location);
+
+        console.log('📊 Extracted properties:', {
+          residueName, residueNumber, chainId, atomName, elementType
+        });
 
         let coordinates;
         try {
@@ -121,23 +127,26 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           const elementIndex = location.element;
           const pos = unit.conformation.position(elementIndex, Vec3());
           coordinates = { x: pos[0], y: pos[1], z: pos[2] };
+          console.log('📍 Coordinates:', coordinates);
         } catch (e) {
-          // Coordinates not available
           console.log('⚠️ Coordinates not available for selection');
         }
 
         const description = `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`;
 
-        return {
+        const selectionInfo: SelectionInfo = {
           residueName,
           residueNumber,
           chainId,
           atomName,
           elementType,
           coordinates,
-          atomCount: 1, // For single atom selection
+          atomCount: 1, // Will be updated later for multi-atom selections
           description
         };
+
+        console.log('✅ Successfully extracted selection info:', selectionInfo);
+        return selectionInfo;
 
       } catch (error) {
         console.error('❌ Error extracting selection info:', error);
@@ -145,9 +154,22 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
+    // ENHANCED: Helper function to update selection state
+    const updateSelectionState = useCallback((selectionInfo: SelectionInfo | null) => {
+      console.log('🔄 Updating selection state:', selectionInfo);
+      setCurrentSelection(selectionInfo);
+      onSelectionChange?.(selectionInfo);
+      
+      if (selectionInfo) {
+        console.log('✅ Selection state updated successfully:', selectionInfo.description);
+      } else {
+        console.log('🗑️ Selection state cleared');
+      }
+    }, [onSelectionChange]);
+
     // Monitor selection changes through multiple channels
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
-      console.log('🔍 Setting up selection monitoring...');
+      console.log('🔍 Setting up enhanced selection monitoring...');
       
       // Clean up previous subscriptions
       if (selectionSubscriptionRef.current) {
@@ -178,9 +200,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
                   
                   const selectionInfo = extractSelectionInfo(location);
                   if (selectionInfo) {
+                    // Calculate total atom count for all elements
+                    const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+                    selectionInfo.atomCount = totalAtoms;
+                    
                     console.log('✅ Manual selection detected via selection manager:', selectionInfo.description);
-                    setCurrentSelection(selectionInfo);
-                    onSelectionChange?.(selectionInfo);
+                    updateSelectionState(selectionInfo);
                   }
                 }
               }
@@ -188,8 +213,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           } else {
             // No selection - clear current selection
             console.log('🔄 Selection cleared via selection manager');
-            setCurrentSelection(null);
-            onSelectionChange?.(null);
+            updateSelectionState(null);
           }
         } catch (error) {
           console.log('⚠️ Error processing selection manager event:', error);
@@ -198,16 +222,16 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
       // Method 2: Listen to interaction events as backup
       const interactionSubscription = plugin.behaviors.interaction.click.subscribe((event) => {
-        console.log('🖱️ Click interaction event:', event);
+        console.log('🖱️ Click interaction event fired');
         
         // Small delay to allow selection to be processed
         setTimeout(() => {
           try {
-            // Check current highlights first
+            // Check current highlights as a backup method
             const currentLoci = plugin.managers.interactivity.lociHighlights.current.loci;
             
             if (currentLoci && StructureElement.Loci.is(currentLoci)) {
-              console.log('🎯 Processing highlighted loci from click');
+              console.log('🎯 Processing highlighted loci from click interaction');
               
               if (currentLoci.elements && currentLoci.elements.length > 0) {
                 const element = currentLoci.elements[0];
@@ -221,9 +245,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
                   
                   const selectionInfo = extractSelectionInfo(location);
                   if (selectionInfo) {
+                    const totalAtoms = currentLoci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+                    selectionInfo.atomCount = totalAtoms;
+                    
                     console.log('✅ Manual selection detected via click interaction:', selectionInfo.description);
-                    setCurrentSelection(selectionInfo);
-                    onSelectionChange?.(selectionInfo);
+                    updateSelectionState(selectionInfo);
                   }
                 }
               }
@@ -231,15 +257,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           } catch (error) {
             console.log('⚠️ Error processing click interaction:', error);
           }
-        }, 100); // Give it more time to process
-      });
-
-      // Method 3: Listen to hover events for immediate feedback
-      const hoverSubscription = plugin.behaviors.interaction.hover.subscribe((event) => {
-        // Only process if there's a current selection that matches the hover
-        if (currentSelection && event.current && StructureElement.Loci.is(event.current.loci)) {
-          console.log('👆 Hover detected on selected element');
-        }
+        }, 100);
       });
 
       // Store subscription for cleanup
@@ -247,20 +265,19 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         unsubscribe: () => {
           selectionSubscription.unsubscribe();
           interactionSubscription.unsubscribe();
-          hoverSubscription.unsubscribe();
         }
       };
 
-      console.log('✅ Selection monitoring setup complete');
+      console.log('✅ Enhanced selection monitoring setup complete');
       
       return () => {
         if (selectionSubscriptionRef.current) {
           selectionSubscriptionRef.current.unsubscribe();
         }
       };
-    }, [extractSelectionInfo, onSelectionChange, currentSelection]);
+    }, [extractSelectionInfo, updateSelectionState]);
 
-    // Direct implementation following your working code exactly
+    // ENHANCED: Direct implementation following your working code exactly
     const selectResidue = useCallback(async (selectedResidue: number, chainId?: string): Promise<string> => {
       console.log(`🎯 selectResidue called with residue: ${selectedResidue}, chain: ${chainId}`);
       
@@ -326,37 +343,55 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
         console.log('✅ Highlight applied via lociHighlights');
 
-        // Extract selection info from the first element
-        if (loci.elements && loci.elements.length > 0) {
+        // ENHANCED: Extract selection info manually for programmatic selections
+        console.log('🔍 Manually extracting selection info for programmatic selection...');
+        
+        try {
           const element = loci.elements[0];
           const structure = loci.structure;
           const unit = structure.units[element.unit];
           
+          console.log('📊 Loci structure:', {
+            elementsCount: loci.elements.length,
+            unitIndex: element.unit,
+            indicesCount: element.indices.length
+          });
+          
           if (unit && element.indices && element.indices.length > 0) {
             const atomIndex = element.indices[0];
             const elementIndex = unit.elements[atomIndex];
-            const location = StructureElement.Location.create(structure, unit, elementIndex);
             
+            console.log('🎯 Creating location for element:', { atomIndex, elementIndex });
+            
+            const location = StructureElement.Location.create(structure, unit, elementIndex);
             const selectionInfo = extractSelectionInfo(location);
+            
             if (selectionInfo) {
-              // Update with total atom count for the entire selection
-              selectionInfo.atomCount = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
-              setCurrentSelection(selectionInfo);
-              onSelectionChange?.(selectionInfo);
-              console.log('✅ Selection info updated:', selectionInfo);
+              // Calculate total atom count for the entire selection
+              const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+              selectionInfo.atomCount = totalAtoms;
+              
+              console.log('✅ Programmatic selection info extracted successfully:', selectionInfo);
+              updateSelectionState(selectionInfo);
+            } else {
+              console.log('❌ Failed to extract selection info');
             }
+          } else {
+            console.log('❌ Invalid unit or indices for selection extraction');
           }
+        } catch (extractError) {
+          console.error('❌ Error extracting selection info for programmatic selection:', extractError);
         }
 
         const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
-        return `Selected residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} (${totalAtoms} atoms)`;
+        return `✅ Selected residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} (${totalAtoms} atoms)`;
 
       } catch (error) {
         console.error('❌ Selection failed:', error);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         throw new Error(`Failed to select residue ${selectedResidue}: ${errorMessage}`);
       }
-    }, [onSelectionChange, extractSelectionInfo]);
+    }, [extractSelectionInfo, updateSelectionState]);
 
     // Simplified residue range selection
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
@@ -407,17 +442,16 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           rangeEnd: query.endResidue
         };
 
-        setCurrentSelection(selectionInfo);
-        onSelectionChange?.(selectionInfo);
+        updateSelectionState(selectionInfo);
 
-        return `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId} (${estimatedResidues} residues, ${totalAtoms} atoms)`;
+        return `✅ Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId} (${estimatedResidues} residues, ${totalAtoms} atoms)`;
 
       } catch (error) {
         console.error('❌ Range selection failed:', error);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         throw new Error(`Failed to select residue range: ${errorMessage}`);
       }
-    }, [onSelectionChange]);
+    }, [updateSelectionState]);
 
     // Show only selected region - IMPLEMENTED!
     const showOnlySelected = useCallback(async (): Promise<void> => {
@@ -612,7 +646,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           ref: pluginRef.current.state.data.tree.root.ref
         });
         waterRepresentationRef.current = null;
-        setCurrentSelection(null);
+        updateSelectionState(null);
         selectionOnlyModeRef.current = false;
         originalRepresentationsRef.current = [];
 
@@ -639,7 +673,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       } finally {
         setIsLoading(false);
       }
-    }, [onError]);
+    }, [onError, updateSelectionState]);
 
     // Clear selection
     const clearSelection = useCallback(async (): Promise<void> => {
@@ -649,15 +683,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         (window as any).molstar?.managers.interactivity.lociHighlights.clear();
         
         // Clear current selection state
-        setCurrentSelection(null);
-        onSelectionChange?.(null);
+        updateSelectionState(null);
         
         console.log('✅ Selection cleared');
       } catch (error) {
         console.error('❌ Failed to clear selection:', error);
         throw error;
       }
-    }, [onSelectionChange]);
+    }, [updateSelectionState]);
 
     // Reset camera view
     const resetView = useCallback(() => {
