@@ -302,6 +302,40 @@ export class MolstarCommandProcessor {
       }
     });
 
+    // Add single residue selection command
+    this.commands.set('select_residue', {
+      name: 'select_residue',
+      description: 'Select a specific residue',
+      execute: async (viewer, params) => {
+        try {
+          console.log('🎯 Executing select_residue with params:', params);
+          
+          if (!params) {
+            return 'No parameters provided. Please specify residueId and optionally chainId.';
+          }
+          
+          const residueId = params.residueId;
+          const chainId = params.chainId;
+          
+          if (residueId === undefined || residueId === null || residueId === '') {
+            return 'Missing residueId parameter. Please specify the residue number.';
+          }
+
+          const parsedResidueId = parseInt(residueId.toString());
+          if (isNaN(parsedResidueId)) {
+            return 'Invalid residue number. Please provide a valid numeric residue ID.';
+          }
+
+          const result = await viewer.selectResidue(parsedResidueId, chainId?.toString()?.toUpperCase());
+          return result;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          console.error('❌ select_residue error:', errorMessage);
+          return `❌ Failed to select residue:\n\n${errorMessage}`;
+        }
+      }
+    });
+
     this.commands.set('clear_selection', {
       name: 'clear_selection',
       description: 'Clear all current selections',
@@ -428,11 +462,23 @@ export class MolstarCommandProcessor {
     if (singleMatch) {
       console.log('✅ Matched single residue pattern:', singleMatch);
       return {
-        command: 'select_residue_range',
+        command: 'select_residue',
         params: {
-          chainId: singleMatch[2].toUpperCase(),
-          startResidue: singleMatch[1],
-          endResidue: singleMatch[1] // Same start and end for single residue
+          residueId: singleMatch[1],
+          chainId: singleMatch[2].toUpperCase()
+        }
+      };
+    }
+
+    // Pattern 5: Simple residue selection without chain "select residue 1"
+    const simpleResidueRegex = /select.*?(?:residue)\s*(\d+)/i;
+    const simpleMatch = input.match(simpleResidueRegex);
+    if (simpleMatch) {
+      console.log('✅ Matched simple residue pattern:', simpleMatch);
+      return {
+        command: 'select_residue',
+        params: {
+          residueId: simpleMatch[1]
         }
       };
     }

@@ -64,6 +64,7 @@ export interface ViewerControls {
   getCurrentSelection: () => SelectionInfo | null;
   selectResidueRange: (query: ResidueRangeQuery) => Promise<string>;
   clearSelection: () => Promise<void>;
+  selectResidue: (residueId: number, chainId?: string) => Promise<string>;
 }
 
 const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
@@ -105,6 +106,111 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       
       return spec;
     }, []);
+
+    // Helper function to get structure data (using the working approach)
+    const getStructureData = useCallback(() => {
+      const plugin = pluginRef.current;
+      if (!plugin) return null;
+
+      // Method 1: Try the working approach from user's code
+      try {
+        // Make molstar globally accessible for debugging/external access
+        (window as any).molstar = plugin;
+        
+        const data = plugin.managers.structure.hierarchy.current.structures[0]?.cell?.obj?.data;
+        if (data) {
+          console.log('✅ Got structure data via hierarchy approach');
+          return data;
+        }
+      } catch (error) {
+        console.log('⚠️ Hierarchy approach failed:', error);
+      }
+
+      // Method 2: Fallback to state selection approach
+      try {
+        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        if (structures.length > 0 && structures[0].obj?.data) {
+          console.log('✅ Got structure data via state selection approach');
+          return structures[0].obj.data;
+        }
+      } catch (error) {
+        console.log('⚠️ State selection approach failed:', error);
+      }
+
+      console.log('❌ No structure data available');
+      return null;
+    }, []);
+
+    // Single residue selection using the working approach
+    const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
+      const plugin = pluginRef.current;
+      if (!plugin) {
+        return 'No plugin available';
+      }
+
+      try {
+        console.log(`🎯 Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
+        
+        const data = getStructureData();
+        if (!data) {
+          throw new Error('No structure data available');
+        }
+
+        // Build selection query based on the working approach
+        let selectionQuery;
+        
+        if (chainId) {
+          // Select specific residue in specific chain
+          selectionQuery = Script.getStructureSelection((Q) =>
+            Q.struct.generator.atomGroups({
+              'chain-test': Q.core.rel.eq([
+                Q.struct.atomProperty.macromolecular.auth_asym_id(), 
+                chainId
+              ]),
+              'residue-test': Q.core.rel.eq([
+                Q.struct.atomProperty.macromolecular.label_seq_id(),
+                residueId,
+              ]),
+              'group-by': Q.struct.atomProperty.macromolecular.residueKey(),
+            }), data);
+        } else {
+          // Select residue in any chain (original working approach)
+          selectionQuery = Script.getStructureSelection((Q) =>
+            Q.struct.generator.atomGroups({
+              'residue-test': Q.core.rel.eq([
+                Q.struct.atomProperty.macromolecular.label_seq_id(),
+                residueId,
+              ]),
+              'group-by': Q.struct.atomProperty.macromolecular.residueKey(),
+            }), data);
+        }
+
+        // Convert to loci
+        const loci = StructureSelection.toLociWithSourceUnits(selectionQuery);
+        
+        if (!loci.elements || loci.elements.length === 0) {
+          throw new Error(`No atoms found for residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
+        }
+
+        // Use lociSelects for actual selection (not just highlighting)
+        plugin.managers.interactivity.lociSelects.selectOnly({ loci });
+        
+        // Also update our internal state
+        const selectionInfo = processLociSelection(loci);
+        if (selectionInfo) {
+          setCurrentSelection(selectionInfo);
+          onSelectionChange?.(selectionInfo);
+        }
+
+        console.log('✅ Residue selected successfully');
+        return `Selected residue ${residueId}${chainId ? ` in chain ${chainId}` : ''} (${loci.elements.reduce((acc, el) => acc + el.indices.length, 0)} atoms)`;
+
+      } catch (error) {
+        console.error('❌ Failed to select residue:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        throw new Error(`Failed to select residue ${residueId}: ${errorMessage}`);
+      }
+    }, [getStructureData, onSelectionChange]);
 
     // Process selection from loci data
     const processLociSelection = useCallback((loci: Loci): SelectionInfo | null => {
@@ -176,6 +282,74 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         return null;
       }
     }, []);
+
+    // Enhanced residue range selection using the working approach
+    const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
+      const plugin = pluginRef.current;
+      if (!plugin) {
+        return 'No plugin available';
+      }
+
+      try {
+        console.log(`🎯 Selecting residue range: chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue}`);
+
+        const data = getStructureData();
+        if (!data) {
+          throw new Error('No structure data available');
+        }
+
+        // Use the working approach for range selection
+        const selectionQuery = Script.getStructureSelection((Q) =>
+          Q.struct.generator.atomGroups({
+            'chain-test': Q.core.rel.eq([
+              Q.struct.atomProperty.macromolecular.auth_asym_id(), 
+              query.chainId
+            ]),
+            'residue-test': Q.core.rel.inRange([
+              Q.struct.atomProperty.macromolecular.label_seq_id(),
+              query.startResidue,
+              query.endResidue
+            ]),
+            'group-by': Q.struct.atomProperty.macromolecular.residueKey(),
+          }), data);
+
+        // Convert to loci
+        const loci = StructureSelection.toLociWithSourceUnits(selectionQuery);
+        
+        if (!loci.elements || loci.elements.length === 0) {
+          throw new Error(`No atoms found in residue range ${query.startResidue}-${query.endResidue} for chain '${query.chainId}'`);
+        }
+
+        // Use lociSelects for actual selection
+        plugin.managers.interactivity.lociSelects.selectOnly({ loci });
+
+        // Count atoms and estimate residues
+        let totalAtoms = 0;
+        for (const element of loci.elements) {
+          totalAtoms += element.indices.length;
+        }
+        const estimatedResidues = Math.ceil(totalAtoms / 10); // Rough estimate
+
+        // Update internal state
+        const selectionInfo: SelectionInfo = {
+          chainId: query.chainId,
+          residueNumber: query.startResidue,
+          atomCount: totalAtoms,
+          description: `Chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue} (${estimatedResidues} residues, ${totalAtoms} atoms)`
+        };
+
+        setCurrentSelection(selectionInfo);
+        onSelectionChange?.(selectionInfo);
+
+        console.log('✅ Residue range selected successfully');
+        return `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId}. Total: ${estimatedResidues} residues, ${totalAtoms} atoms.`;
+
+      } catch (error) {
+        console.error('❌ Failed to select residue range:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        throw new Error(`Failed to select residue range: ${errorMessage}`);
+      }
+    }, [getStructureData, onSelectionChange]);
 
     // Setup selection monitoring using multiple event sources
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
@@ -301,6 +475,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         });
         
         pluginRef.current = plugin;
+        
+        // Make molstar globally accessible
+        (window as any).molstar = plugin;
+        
         console.log('✅ Molstar plugin initialized');
         
         // Wait for plugin to be fully ready
@@ -383,231 +561,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [onError, setupSelectionMonitoring]);
 
-    // Helper function to get available chains in the structure
-    const getAvailableChains = useCallback((structure: Structure): string[] => {
-      const chains = new Set<string>();
-      
-      try {
-        // Iterate through units to find all chain IDs
-        for (const unit of structure.units) {
-          if (unit.model) {
-            const { atomicHierarchy } = unit.model;
-            if (atomicHierarchy && atomicHierarchy.chains) {
-              // Get chain information
-              for (let i = 0; i < atomicHierarchy.chains._rowCount; i++) {
-                const chainId = atomicHierarchy.chains.label_asym_id.value(i);
-                if (chainId) {
-                  chains.add(chainId);
-                }
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error getting available chains:', error);
-      }
-      
-      return Array.from(chains).sort();
-    }, []);
-
-    // Helper function to safely get a sequence ID from residue data
-    const getResidueSequenceId = useCallback((residues: any, index: number): number | null => {
-      try {
-        // First try auth_seq_id (author sequence ID)
-        if (residues.auth_seq_id && typeof residues.auth_seq_id.value === 'function') {
-          const authSeqId = residues.auth_seq_id.value(index);
-          const authSeqIdNum = Number(authSeqId);
-          if (!isNaN(authSeqIdNum)) {
-            return authSeqIdNum;
-          }
-        }
-        
-        // Fallback to label_seq_id (label sequence ID)
-        if (residues.label_seq_id && typeof residues.label_seq_id.value === 'function') {
-          const labelSeqId = residues.label_seq_id.value(index);
-          const labelSeqIdNum = Number(labelSeqId);
-          if (!isNaN(labelSeqIdNum)) {
-            return labelSeqIdNum;
-          }
-        }
-        
-        return null;
-      } catch (error) {
-        console.error('Error getting residue sequence ID:', error);
-        return null;
-      }
-    }, []);
-
-    // Helper function to safely get a chain ID from residue data
-    const getResidueChainId = useCallback((residues: any, index: number): string | null => {
-      try {
-        // Try label_asym_id first (most common)
-        if (residues.label_asym_id && typeof residues.label_asym_id.value === 'function') {
-          const chainId = residues.label_asym_id.value(index);
-          if (typeof chainId === 'string') {
-            return chainId;
-          }
-        }
-        
-        // Fallback to auth_asym_id
-        if (residues.auth_asym_id && typeof residues.auth_asym_id.value === 'function') {
-          const chainId = residues.auth_asym_id.value(index);
-          if (typeof chainId === 'string') {
-            return chainId;
-          }
-        }
-        
-        return null;
-      } catch (error) {
-        console.error('Error getting residue chain ID:', error);
-        return null;
-      }
-    }, []);
-
-    // Helper function to get residue range for a specific chain
-    const getResidueRangeForChain = useCallback((structure: Structure, chainId: string): { min: number; max: number } | null => {
-      let minResidue = Infinity;
-      let maxResidue = -Infinity;
-      let found = false;
-      
-      try {
-        for (const unit of structure.units) {
-          if (unit.model) {
-            const { atomicHierarchy } = unit.model;
-            if (atomicHierarchy && atomicHierarchy.residues) {
-              
-              // Check each residue
-              for (let i = 0; i < atomicHierarchy.residues._rowCount; i++) {
-                // Get the chain ID safely
-                const currentChainId = getResidueChainId(atomicHierarchy.residues, i);
-                
-                if (currentChainId === chainId) {
-                  // Get the sequence ID safely
-                  const seqId = getResidueSequenceId(atomicHierarchy.residues, i);
-                  
-                  if (seqId !== null) {
-                    minResidue = Math.min(minResidue, seqId);
-                    maxResidue = Math.max(maxResidue, seqId);
-                    found = true;
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error getting residue range for chain:', error);
-      }
-      
-      return found ? { min: minResidue, max: maxResidue } : null;
-    }, [getResidueSequenceId, getResidueChainId]);
-
-    // Select residue range with improved error handling
-    const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
-      const plugin = pluginRef.current;
-      if (!plugin) {
-        return 'No plugin available';
-      }
-
-      try {
-        console.log(`🎯 Selecting residue range: chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue}`);
-
-        // Get the structure
-        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
-        if (structures.length === 0) {
-          throw new Error('No structure loaded');
-        }
-
-        const structure = structures[0].obj?.data;
-        if (!structure) {
-          throw new Error('Structure data not available');
-        }
-
-        // First, check if the chain exists
-        const availableChains = getAvailableChains(structure);
-        console.log('Available chains:', availableChains);
-        
-        if (!availableChains.includes(query.chainId)) {
-          throw new Error(`Chain '${query.chainId}' not found in the structure. Available chains: ${availableChains.join(', ')}`);
-        }
-
-        // Get the residue range for this chain
-        const residueRange = getResidueRangeForChain(structure, query.chainId);
-        if (!residueRange) {
-          throw new Error(`Chain '${query.chainId}' found but contains no residues with sequence IDs`);
-        }
-
-        console.log(`Chain ${query.chainId} residue range: ${residueRange.min} - ${residueRange.max}`);
-
-        // Check if the requested range is valid
-        if (query.startResidue > residueRange.max || query.endResidue < residueRange.min) {
-          throw new Error(`Residue range ${query.startResidue}-${query.endResidue} is outside the available range for chain '${query.chainId}' (${residueRange.min}-${residueRange.max})`);
-        }
-
-        // Warn if the range is partially outside
-        const actualStart = Math.max(query.startResidue, residueRange.min);
-        const actualEnd = Math.min(query.endResidue, residueRange.max);
-        let warningMessage = '';
-        
-        if (actualStart !== query.startResidue || actualEnd !== query.endResidue) {
-          warningMessage = `Note: Adjusted range to ${actualStart}-${actualEnd} to fit available residues. `;
-        }
-
-        // Create selection query using Molstar's selection language
-        const selection = Script.getStructureSelection(Q => 
-          Q.struct.generator.atomGroups({
-            'chain-test': Q.core.rel.eq([
-              Q.struct.atomProperty.macromolecular.auth_asym_id(), 
-              query.chainId
-            ]),
-            'residue-test': Q.core.rel.inRange([
-              Q.struct.atomProperty.macromolecular.auth_seq_id(),
-              actualStart,
-              actualEnd
-            ])
-          }), structure);
-
-        // Apply the selection
-        const loci = StructureSelection.toLociWithSourceUnits(selection);
-        
-        // Add selection to the manager
-        await plugin.managers.structure.selection.fromLoci('add', loci);
-
-        // Process and store the selection info
-        if (loci.elements && loci.elements.length > 0) {
-          // Count total residues and atoms
-          let totalAtoms = 0;
-          let residueCount = 0;
-          
-          for (const element of loci.elements) {
-            totalAtoms += element.indices.length;
-          }
-
-          // Estimate residue count (rough approximation)
-          residueCount = Math.ceil(totalAtoms / 10); // Rough estimate
-
-          const selectionInfo: SelectionInfo = {
-            chainId: query.chainId,
-            residueNumber: actualStart,
-            atomCount: totalAtoms,
-            description: `Chain ${query.chainId}, residues ${actualStart}-${actualEnd} (${residueCount} residues, ${totalAtoms} atoms)`
-          };
-
-          setCurrentSelection(selectionInfo);
-          onSelectionChange?.(selectionInfo);
-
-          console.log('✅ Residue range selected successfully');
-          return `${warningMessage}Selected residues ${actualStart}-${actualEnd} in chain ${query.chainId}. Total: ${residueCount} residues, ${totalAtoms} atoms.`;
-        } else {
-          throw new Error(`No atoms found in residue range ${actualStart}-${actualEnd} for chain '${query.chainId}'. This might indicate an issue with the structure data or residue numbering.`);
-        }
-
-      } catch (error) {
-        console.error('❌ Failed to select residue range:', error);
-        throw error;
-      }
-    }, [onSelectionChange, getAvailableChains, getResidueRangeForChain]);
-
     // Clear selection
     const clearSelection = useCallback(async (): Promise<void> => {
       const plugin = pluginRef.current;
@@ -616,8 +569,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       try {
         console.log('🧹 Clearing selection');
         
-        // Clear selection manager
-        await plugin.managers.structure.selection.clear();
+        // Clear both selections and highlights
+        plugin.managers.interactivity.lociSelects.clear();
+        plugin.managers.interactivity.lociHighlights.clear();
         
         // Clear current selection state
         setCurrentSelection(null);
@@ -972,12 +926,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       getStructureInfo,
       getCurrentSelection,
       selectResidueRange,
-      clearSelection
+      clearSelection,
+      selectResidue
     }), [
       loadStructure, resetView, zoomIn, zoomOut, setRepresentation, getPlugin,
       showWaterMolecules, hideWaterMolecules, hideLigands, focusOnChain, getSelectionInfo,
       showOnlySelected, highlightChain, clearHighlights, getStructureInfo, getCurrentSelection,
-      selectResidueRange, clearSelection
+      selectResidueRange, clearSelection, selectResidue
     ]);
 
     // Initialize plugin on mount
