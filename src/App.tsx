@@ -186,79 +186,78 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-6 h-[calc(100vh-140px)]">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
+      <main className="container mx-auto px-4 py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-140px)]">
           
-          {/* Left Panel - Controls (SCROLLABLE) */}
-          <div className="lg:col-span-3 scrollable-controls">
-            <div className="space-y-4">
-              {/* Current Structure Info */}
-              {isStructureLoaded && (
-                <Card className="bg-gray-800/50 border-gray-700">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-white flex items-center text-sm">
-                      <Atom className="h-4 w-4 mr-2 text-green-400" />
-                      Current Structure
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-center">
-                      <div className="text-lg font-semibold text-white">{currentStructureName}</div>
-                      <div className="text-sm text-gray-400 capitalize">{currentRepresentation} view</div>
-                      {currentSelection && (
-                        <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded">
-                          <div className="text-xs text-green-300 font-medium">Selected:</div>
-                          <div className="text-sm text-green-200">
-                            {currentSelection.residueName} {currentSelection.residueNumber} (Chain {currentSelection.chainId})
-                          </div>
+          {/* Left Panel - Controls (FIXED: Proper scrolling structure) */}
+          <div className="lg:col-span-3 space-y-4 overflow-y-auto max-h-full">
+            
+            {/* Current Structure Info */}
+            {isStructureLoaded && (
+              <Card className="bg-gray-800/50 border-gray-700">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-white flex items-center text-sm">
+                    <Atom className="h-4 w-4 mr-2 text-green-400" />
+                    Current Structure
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center">
+                    <div className="text-lg font-semibold text-white">{currentStructureName}</div>
+                    <div className="text-sm text-gray-400 capitalize">{currentRepresentation} view</div>
+                    {currentSelection && (
+                      <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded">
+                        <div className="text-xs text-green-300 font-medium">Selected:</div>
+                        <div className="text-sm text-green-200">
+                          {currentSelection.residueName} {currentSelection.residueNumber} (Chain {currentSelection.chainId})
                         </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
-              {/* Control Panel */}
-              <ControlPanel
-                onRepresentationChange={handleRepresentationChange}
-                onCameraReset={handleCameraReset}
-                onZoomIn={handleZoomIn}
-                onZoomOut={handleZoomOut}
-                currentRepresentation={currentRepresentation}
-                isStructureLoaded={isStructureLoaded}
-              />
+            {/* Control Panel */}
+            <ControlPanel
+              onRepresentationChange={handleRepresentationChange}
+              onCameraReset={handleCameraReset}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              currentRepresentation={currentRepresentation}
+              isStructureLoaded={isStructureLoaded}
+            />
 
-              {/* Structure Sources */}
-              <Tabs defaultValue="samples" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 bg-gray-800/50 border border-gray-700">
-                  <TabsTrigger 
-                    value="samples" 
-                    className="text-gray-400 data-[state=active]:text-white data-[state=active]:bg-gray-700"
-                  >
-                    Samples
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="upload" 
-                    className="text-gray-400 data-[state=active]:text-white data-[state=active]:bg-gray-700"
-                  >
-                    Upload
-                  </TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="samples" className="mt-4">
-                  <ProteinSelector
-                    onProteinSelect={handleProteinSelect}
-                    selectedProtein={selectedProtein}
-                  />
-                </TabsContent>
-                
-                <TabsContent value="upload" className="mt-4">
-                  <FileUploader
-                    onFileLoad={handleFileLoad}
-                  />
-                </TabsContent>
-              </Tabs>
-            </div>
+            {/* Structure Sources */}
+            <Tabs defaultValue="samples" className="w-full">
+              <TabsList className="grid w-full grid-cols-2 bg-gray-800/50 border border-gray-700">
+                <TabsTrigger 
+                  value="samples" 
+                  className="text-gray-400 data-[state=active]:text-white data-[state=active]:bg-gray-700"
+                >
+                  Samples
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="upload" 
+                  className="text-gray-400 data-[state=active]:text-white data-[state=active]:bg-gray-700"
+                >
+                  Upload
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="samples" className="mt-4">
+                <ProteinSelector
+                  onProteinSelect={handleProteinSelect}
+                  selectedProtein={selectedProtein}
+                />
+              </TabsContent>
+              
+              <TabsContent value="upload" className="mt-4">
+                <FileUploader
+                  onFileLoad={handleFileLoad}
+                />
+              </TabsContent>
+            </Tabs>
           </div>
 
           {/* Main Viewer */}
