@@ -9,10 +9,9 @@ import { StateSelection } from 'molstar/lib/mol-state';
 import { PluginStateObject } from 'molstar/lib/mol-plugin-state/objects';
 import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
-import { StructureElement, StructureProperties, Structure } from 'molstar/lib/mol-model/structure';
+import { StructureElement, StructureProperties } from 'molstar/lib/mol-model/structure';
 import { Script } from 'molstar/lib/mol-script/script';
 import { StructureSelection } from 'molstar/lib/mol-model/structure/query';
-import { Loci } from 'molstar/lib/mol-model/loci';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut } from 'lucide-react';
@@ -75,195 +74,208 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const [isInitialized, setIsInitialized] = useState(false);
     const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
     const waterRepresentationRef = useRef<string | null>(null);
-    const subscriptionsRef = useRef<any[]>([]);
+    const selectionSubscriptionRef = useRef<any>(null);
 
-    // Create the plugin specification with proper selection enabled
+    // Create the plugin specification with minimal UI
     const createSpec = useCallback(() => {
       const spec = DefaultPluginUISpec();
-      
-      // Configure layout - keep State Tree visible for selection mode
       spec.layout = {
         initial: {
-          isExpanded: true,
-          showControls: true,
+          isExpanded: false,
+          showControls: false,
           regionState: {
             bottom: 'hidden',
-            left: 'collapsed',    // State Tree available but collapsed
-            right: 'hidden',      // Hide Structure Tools
-            top: 'collapsed',     // Sequence view available but collapsed
+            left: 'hidden',
+            right: 'hidden',
+            top: 'hidden',
           }
         }
       };
-      
-      // Enable all necessary features for selection
       spec.config = [
-        [PluginConfig.Viewport.ShowExpand, true],
-        [PluginConfig.Viewport.ShowControls, true],
-        [PluginConfig.Viewport.ShowSettings, true],
-        [PluginConfig.Viewport.ShowSelectionMode, true],    // Critical for selection
-        [PluginConfig.Viewport.ShowAnimation, true]
+        [PluginConfig.Viewport.ShowExpand, false],
+        [PluginConfig.Viewport.ShowControls, false],
+        [PluginConfig.Viewport.ShowSettings, false],
+        [PluginConfig.Viewport.ShowSelectionMode, false],
+        [PluginConfig.Viewport.ShowAnimation, false]
       ];
-      
       return spec;
     }, []);
 
-    // Helper function to get structure data (using the working approach)
-    const getStructureData = useCallback(() => {
-      const plugin = pluginRef.current;
-      if (!plugin) return null;
-
-      // Method 1: Try the working approach from user's code
-      try {
-        // Make molstar globally accessible for debugging/external access
-        (window as any).molstar = plugin;
-        
-        const data = plugin.managers.structure.hierarchy.current.structures[0]?.cell?.obj?.data;
-        if (data) {
-          console.log('✅ Got structure data via hierarchy approach');
-          return data;
-        }
-      } catch (error) {
-        console.log('⚠️ Hierarchy approach failed:', error);
+    // Direct implementation following your working code exactly
+    const selectResidue = useCallback(async (selectedResidue: number, chainId?: string): Promise<string> => {
+      console.log(`🎯 selectResidue called with residue: ${selectedResidue}, chain: ${chainId}`);
+      
+      // Use the exact approach from your working code
+      const data = (window as any).molstar?.managers.structure.hierarchy.current.structures[0]?.cell?.obj?.data;
+      if (!data) {
+        console.log('❌ No structure data available');
+        return 'No structure data available';
       }
 
-      // Method 2: Fallback to state selection approach
-      try {
-        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
-        if (structures.length > 0 && structures[0].obj?.data) {
-          console.log('✅ Got structure data via state selection approach');
-          return structures[0].obj.data;
-        }
-      } catch (error) {
-        console.log('⚠️ State selection approach failed:', error);
-      }
-
-      console.log('❌ No structure data available');
-      return null;
-    }, []);
-
-    // Single residue selection using the working approach
-    const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
-      const plugin = pluginRef.current;
-      if (!plugin) {
-        return 'No plugin available';
-      }
+      console.log('✅ Structure data found:', data);
 
       try {
-        console.log(`🎯 Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
-        
-        const data = getStructureData();
-        if (!data) {
-          throw new Error('No structure data available');
-        }
+        const seq_id = selectedResidue;
+        let sel;
 
-        // Build selection query based on the working approach
-        let selectionQuery;
-        
         if (chainId) {
           // Select specific residue in specific chain
-          selectionQuery = Script.getStructureSelection((Q) =>
-            Q.struct.generator.atomGroups({
-              'chain-test': Q.core.rel.eq([
-                Q.struct.atomProperty.macromolecular.auth_asym_id(), 
-                chainId
-              ]),
-              'residue-test': Q.core.rel.eq([
-                Q.struct.atomProperty.macromolecular.label_seq_id(),
-                residueId,
-              ]),
-              'group-by': Q.struct.atomProperty.macromolecular.residueKey(),
-            }), data);
+          sel = Script.getStructureSelection(
+            (Q: any) =>
+              Q.struct.generator.atomGroups({
+                "chain-test": Q.core.rel.eq([
+                  Q.struct.atomProperty.macromolecular.auth_asym_id(),
+                  chainId
+                ]),
+                "residue-test": Q.core.rel.eq([
+                  Q.struct.atomProperty.macromolecular.label_seq_id(),
+                  seq_id,
+                ]),
+                "group-by": Q.struct.atomProperty.macromolecular.residueKey(),
+              }),
+            data
+          );
         } else {
-          // Select residue in any chain (original working approach)
-          selectionQuery = Script.getStructureSelection((Q) =>
-            Q.struct.generator.atomGroups({
-              'residue-test': Q.core.rel.eq([
-                Q.struct.atomProperty.macromolecular.label_seq_id(),
-                residueId,
-              ]),
-              'group-by': Q.struct.atomProperty.macromolecular.residueKey(),
-            }), data);
+          // Use your exact working code for any chain
+          sel = Script.getStructureSelection(
+            (Q: any) =>
+              Q.struct.generator.atomGroups({
+                "residue-test": Q.core.rel.eq([
+                  Q.struct.atomProperty.macromolecular.label_seq_id(),
+                  seq_id,
+                ]),
+                "group-by": Q.struct.atomProperty.macromolecular.residueKey(),
+              }),
+            data
+          );
         }
 
-        // Convert to loci
-        const loci = StructureSelection.toLociWithSourceUnits(selectionQuery);
-        
+        console.log('✅ Selection query created:', sel);
+
+        const loci = StructureSelection.toLociWithSourceUnits(sel);
+        console.log('✅ Loci created:', loci);
+
         if (!loci.elements || loci.elements.length === 0) {
-          throw new Error(`No atoms found for residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
+          throw new Error(`Residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} not found`);
         }
 
-        // Use lociSelects for actual selection (not just highlighting)
-        plugin.managers.interactivity.lociSelects.selectOnly({ loci });
-        
-        // Also update our internal state
-        const selectionInfo = processLociSelection(loci);
+        // Use lociSelects for actual selection (following maintainer's tip)
+        (window as any).molstar?.managers.interactivity.lociSelects.selectOnly({ loci });
+        console.log('✅ Selection applied via lociSelects');
+
+        // Also highlight for visual feedback (your original working approach)
+        (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
+        console.log('✅ Highlight applied via lociHighlights');
+
+        // Extract selection info
+        const selectionInfo = extractSelectionInfo(loci);
         if (selectionInfo) {
           setCurrentSelection(selectionInfo);
           onSelectionChange?.(selectionInfo);
+          console.log('✅ Selection info updated:', selectionInfo);
         }
 
-        console.log('✅ Residue selected successfully');
-        return `Selected residue ${residueId}${chainId ? ` in chain ${chainId}` : ''} (${loci.elements.reduce((acc, el) => acc + el.indices.length, 0)} atoms)`;
+        const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+        return `Selected residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} (${totalAtoms} atoms)`;
 
       } catch (error) {
-        console.error('❌ Failed to select residue:', error);
+        console.error('❌ Selection failed:', error);
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        throw new Error(`Failed to select residue ${residueId}: ${errorMessage}`);
+        throw new Error(`Failed to select residue ${selectedResidue}: ${errorMessage}`);
       }
-    }, [getStructureData, onSelectionChange]);
+    }, [onSelectionChange]);
 
-    // Process selection from loci data
-    const processLociSelection = useCallback((loci: Loci): SelectionInfo | null => {
+    // Simplified residue range selection
+    const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
+      console.log(`🎯 selectResidueRange called:`, query);
+      
+      const data = (window as any).molstar?.managers.structure.hierarchy.current.structures[0]?.cell?.obj?.data;
+      if (!data) {
+        return 'No structure data available';
+      }
+
       try {
-        console.log('🔍 Processing loci selection:', loci);
+        const sel = Script.getStructureSelection(
+          (Q: any) =>
+            Q.struct.generator.atomGroups({
+              "chain-test": Q.core.rel.eq([
+                Q.struct.atomProperty.macromolecular.auth_asym_id(),
+                query.chainId
+              ]),
+              "residue-test": Q.core.rel.inRange([
+                Q.struct.atomProperty.macromolecular.label_seq_id(),
+                query.startResidue,
+                query.endResidue
+              ]),
+              "group-by": Q.struct.atomProperty.macromolecular.residueKey(),
+            }),
+          data
+        );
 
-        if (!StructureElement.Loci.is(loci)) {
-          console.log('❌ Loci is not a StructureElement.Loci');
-          return null;
-        }
+        const loci = StructureSelection.toLociWithSourceUnits(sel);
 
         if (!loci.elements || loci.elements.length === 0) {
-          console.log('❌ No elements in loci');
-          return null;
+          throw new Error(`No residues found in range ${query.startResidue}-${query.endResidue} for chain ${query.chainId}`);
         }
 
+        // Use both selection and highlighting
+        (window as any).molstar?.managers.interactivity.lociSelects.selectOnly({ loci });
+        (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
+
+        const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+        const estimatedResidues = Math.ceil(totalAtoms / 10);
+
+        const selectionInfo: SelectionInfo = {
+          chainId: query.chainId,
+          residueNumber: query.startResidue,
+          atomCount: totalAtoms,
+          description: `Chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue} (${estimatedResidues} residues)`
+        };
+
+        setCurrentSelection(selectionInfo);
+        onSelectionChange?.(selectionInfo);
+
+        return `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId} (${estimatedResidues} residues, ${totalAtoms} atoms)`;
+
+      } catch (error) {
+        console.error('❌ Range selection failed:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        throw new Error(`Failed to select residue range: ${errorMessage}`);
+      }
+    }, [onSelectionChange]);
+
+    // Extract selection information from loci
+    const extractSelectionInfo = useCallback((loci: any): SelectionInfo | null => {
+      try {
+        if (!StructureElement.Loci.is(loci)) return null;
+        if (!loci.elements || loci.elements.length === 0) return null;
+
         const element = loci.elements[0];
-        if (!element.indices || element.indices.length === 0) {
-          console.log('❌ No indices in element');
-          return null;
-        }
+        if (!element.indices || element.indices.length === 0) return null;
 
         const structure = loci.structure;
         const unit = structure.units[element.unit];
-        if (!unit) {
-          console.log('❌ No unit found');
-          return null;
-        }
+        if (!unit) return null;
 
-        // Get the first atom
         const atomIndex = element.indices[0];
         const elementIndex = unit.elements[atomIndex];
-        
-        // Create location for property extraction
         const location = StructureElement.Location.create(structure, unit, elementIndex);
 
-        // Extract properties
         const residueName = StructureProperties.residue.label_comp_id(location);
         const residueNumber = StructureProperties.residue.label_seq_id(location);
         const chainId = StructureProperties.chain.label_asym_id(location);
         const atomName = StructureProperties.atom.label_atom_id(location);
         const elementType = StructureProperties.atom.type_symbol(location);
 
-        // Get coordinates
         let coordinates;
         try {
           const pos = unit.conformation.position(elementIndex, Vec3());
           coordinates = { x: pos[0], y: pos[1], z: pos[2] };
         } catch (e) {
-          console.log('⚠️ Could not extract coordinates:', e);
+          // Coordinates not available
         }
 
-        const selectionInfo: SelectionInfo = {
+        return {
           residueName,
           residueNumber,
           chainId,
@@ -274,233 +286,70 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
         };
 
-        console.log('✅ Selection processed successfully:', selectionInfo);
-        return selectionInfo;
-
       } catch (error) {
-        console.error('❌ Error processing loci selection:', error);
+        console.error('❌ Error extracting selection info:', error);
         return null;
       }
     }, []);
 
-    // Enhanced residue range selection using the working approach
-    const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
-      const plugin = pluginRef.current;
-      if (!plugin) {
-        return 'No plugin available';
-      }
-
-      try {
-        console.log(`🎯 Selecting residue range: chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue}`);
-
-        const data = getStructureData();
-        if (!data) {
-          throw new Error('No structure data available');
-        }
-
-        // Use the working approach for range selection
-        const selectionQuery = Script.getStructureSelection((Q) =>
-          Q.struct.generator.atomGroups({
-            'chain-test': Q.core.rel.eq([
-              Q.struct.atomProperty.macromolecular.auth_asym_id(), 
-              query.chainId
-            ]),
-            'residue-test': Q.core.rel.inRange([
-              Q.struct.atomProperty.macromolecular.label_seq_id(),
-              query.startResidue,
-              query.endResidue
-            ]),
-            'group-by': Q.struct.atomProperty.macromolecular.residueKey(),
-          }), data);
-
-        // Convert to loci
-        const loci = StructureSelection.toLociWithSourceUnits(selectionQuery);
-        
-        if (!loci.elements || loci.elements.length === 0) {
-          throw new Error(`No atoms found in residue range ${query.startResidue}-${query.endResidue} for chain '${query.chainId}'`);
-        }
-
-        // Use lociSelects for actual selection
-        plugin.managers.interactivity.lociSelects.selectOnly({ loci });
-
-        // Count atoms and estimate residues
-        let totalAtoms = 0;
-        for (const element of loci.elements) {
-          totalAtoms += element.indices.length;
-        }
-        const estimatedResidues = Math.ceil(totalAtoms / 10); // Rough estimate
-
-        // Update internal state
-        const selectionInfo: SelectionInfo = {
-          chainId: query.chainId,
-          residueNumber: query.startResidue,
-          atomCount: totalAtoms,
-          description: `Chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue} (${estimatedResidues} residues, ${totalAtoms} atoms)`
-        };
-
-        setCurrentSelection(selectionInfo);
-        onSelectionChange?.(selectionInfo);
-
-        console.log('✅ Residue range selected successfully');
-        return `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId}. Total: ${estimatedResidues} residues, ${totalAtoms} atoms.`;
-
-      } catch (error) {
-        console.error('❌ Failed to select residue range:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        throw new Error(`Failed to select residue range: ${errorMessage}`);
-      }
-    }, [getStructureData, onSelectionChange]);
-
-    // Setup selection monitoring using multiple event sources
+    // Monitor selection changes
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
-      console.log('🎧 Setting up comprehensive selection monitoring...');
-      
-      // Clear previous subscriptions
-      subscriptionsRef.current.forEach(sub => {
-        try {
-          sub.unsubscribe();
-        } catch (e) {
-          console.log('Warning: Error unsubscribing:', e);
-        }
-      });
-      subscriptionsRef.current = [];
+      // Clean up previous subscription
+      if (selectionSubscriptionRef.current) {
+        selectionSubscriptionRef.current.unsubscribe();
+      }
 
-      try {
-        // Method 1: Listen to highlight changes (most reliable)
-        const highlightSub = plugin.behaviors.interaction.hover.subscribe((event) => {
-          console.log('🎯 Hover event:', event);
-          if (event.current && event.current.loci) {
-            const selectionInfo = processLociSelection(event.current.loci);
-            if (selectionInfo) {
-              console.log('✨ Hover selection detected:', selectionInfo.description);
-            }
-          }
-        });
-        subscriptionsRef.current.push(highlightSub);
-
-        // Method 2: Listen to click events for selection
-        const clickSub = plugin.behaviors.interaction.click.subscribe((event) => {
-          console.log('🖱️ Click event detected:', event);
-          
-          // Trigger selection manually if needed
-          if (event.current && event.current.loci) {
-            const selectionInfo = processLociSelection(event.current.loci);
-            if (selectionInfo) {
-              setCurrentSelection(selectionInfo);
-              onSelectionChange?.(selectionInfo);
-              console.log('✅ Click selection updated:', selectionInfo.description);
-            } else {
-              console.log('🔄 Click detected but no valid selection');
-            }
-          }
-        });
-        subscriptionsRef.current.push(clickSub);
-
-        // Method 3: Listen to selection manager changes
-        if (plugin.managers.structure?.selection?.events?.changed) {
-          const selectionSub = plugin.managers.structure.selection.events.changed.subscribe(() => {
-            console.log('📊 Selection manager changed');
-            
-            // Get current selections from the manager
-            try {
-              const selections = plugin.managers.structure.selection.entries;
-              console.log('📝 Current selections count:', selections.length);
-              
-              if (selections.length > 0) {
-                // Process the first selection
-                const entry = selections[0];
-                if (entry && entry.selection) {
-                  console.log('🔍 Processing selection entry:', entry);
-                  
-                  // Try to extract info from the selection
-                  const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
-                  if (structures.length > 0) {
-                    const structure = structures[0].obj?.data;
-                    if (structure) {
-                      // Convert selection to loci if possible
-                      // This might need more work depending on the structure of entry.selection
-                      console.log('📊 Selection entry structure:', entry.selection);
-                    }
-                  }
-                }
-              } else {
-                // No selections, clear current
-                setCurrentSelection(null);
-                onSelectionChange?.(null);
-                console.log('🔄 No selections, cleared current selection');
-              }
-            } catch (error) {
-              console.error('❌ Error processing selection manager change:', error);
-            }
-          });
-          subscriptionsRef.current.push(selectionSub);
-        }
-
-        // Method 4: Listen to interactivity pick events
-        if (plugin.behaviors.interaction.pick) {
-          const pickSub = plugin.behaviors.interaction.pick.subscribe((event) => {
-            console.log('🎯 Pick event:', event);
-            if (event.current && event.current.loci) {
-              const selectionInfo = processLociSelection(event.current.loci);
+      // Listen to click events for manual selection
+      selectionSubscriptionRef.current = plugin.behaviors.interaction.click.subscribe(() => {
+        // Small delay to ensure selection is processed
+        setTimeout(() => {
+          try {
+            // Check if there's a current selection in the interaction manager
+            const currentLoci = plugin.managers.interactivity.lociHighlights.current.loci;
+            if (currentLoci && StructureElement.Loci.is(currentLoci)) {
+              const selectionInfo = extractSelectionInfo(currentLoci);
               if (selectionInfo) {
                 setCurrentSelection(selectionInfo);
                 onSelectionChange?.(selectionInfo);
-                console.log('✅ Pick selection updated:', selectionInfo.description);
+                console.log('✅ Click selection detected:', selectionInfo.description);
               }
             }
-          });
-          subscriptionsRef.current.push(pickSub);
+          } catch (error) {
+            console.log('⚠️ Error processing click selection:', error);
+          }
+        }, 50);
+      });
+
+      return () => {
+        if (selectionSubscriptionRef.current) {
+          selectionSubscriptionRef.current.unsubscribe();
         }
-
-        console.log('✅ Selection monitoring setup complete with', subscriptionsRef.current.length, 'subscriptions');
-
-      } catch (error) {
-        console.error('❌ Error setting up selection monitoring:', error);
-      }
-    }, [processLociSelection, onSelectionChange]);
+      };
+    }, [extractSelectionInfo, onSelectionChange]);
 
     // Initialize the molstar plugin
     const initializePlugin = useCallback(async () => {
       if (!containerRef.current || pluginRef.current) return;
 
       try {
-        console.log('🚀 Initializing Molstar plugin with enhanced selection...');
         setIsLoading(true);
-        
         const spec = createSpec();
         const plugin = await createPluginUI({
           target: containerRef.current,
           render: renderReact18,
           spec
         });
-        
         pluginRef.current = plugin;
         
-        // Make molstar globally accessible
+        // Make molstar globally accessible (critical for your working approach)
         (window as any).molstar = plugin;
-        
-        console.log('✅ Molstar plugin initialized');
-        
-        // Wait for plugin to be fully ready
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Verify plugin state
-        console.log('📝 Plugin state check:');
-        console.log('  - Builders available:', !!plugin.builders);
-        console.log('  - Managers available:', !!plugin.managers);
-        console.log('  - Structure manager:', !!plugin.managers?.structure);
-        console.log('  - Selection manager:', !!plugin.managers?.structure?.selection);
-        console.log('  - Interaction behaviors:', !!plugin.behaviors?.interaction);
-        console.log('  - Click behavior:', !!plugin.behaviors?.interaction?.click);
-        console.log('  - Hover behavior:', !!plugin.behaviors?.interaction?.hover);
+        console.log('✅ Molstar plugin initialized and made globally accessible');
         
         // Setup selection monitoring
         setupSelectionMonitoring(plugin);
         
         setIsInitialized(true);
         onReady?.(plugin);
-        console.log('🎉 Plugin setup complete');
-        
       } catch (error) {
         console.error('❌ Failed to initialize molstar plugin:', error);
         onError?.(error as Error);
@@ -511,47 +360,35 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Load structure from URL
     const loadStructure = useCallback(async (url: string, format: string = 'pdb') => {
-      // Capture plugin reference at the start to prevent null reference errors
-      const plugin = pluginRef.current;
-      if (!plugin) return;
+      if (!pluginRef.current) return;
 
       try {
-        console.log(`📁 Loading structure from: ${url}`);
         setIsLoading(true);
         
         // Clear existing structures and reset selection
-        await PluginCommands.State.RemoveObject(plugin, { 
-          state: plugin.state.data, 
-          ref: plugin.state.data.tree.root.ref
+        await PluginCommands.State.RemoveObject(pluginRef.current, { 
+          state: pluginRef.current.state.data, 
+          ref: pluginRef.current.state.data.tree.root.ref
         });
         waterRepresentationRef.current = null;
         setCurrentSelection(null);
-        console.log('🧹 Cleared existing structures and selection');
 
         // Download and load the structure
-        const data = await plugin.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
-        const trajectory = await plugin.builders.structure.parseTrajectory(data, format as any);
-        const model = await plugin.builders.structure.createModel(trajectory);
-        const structure = await plugin.builders.structure.createStructure(model);
+        const data = await pluginRef.current.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
+        const trajectory = await pluginRef.current.builders.structure.parseTrajectory(data, format as any);
+        const model = await pluginRef.current.builders.structure.createModel(trajectory);
+        const structure = await pluginRef.current.builders.structure.createStructure(model);
         
-        // Create default representation with interaction enabled
-        await plugin.builders.structure.representation.addRepresentation(structure, {
+        // Create default representation
+        await pluginRef.current.builders.structure.representation.addRepresentation(structure, {
           type: 'cartoon',
           color: 'chain-id'
         });
 
         // Focus the camera on the structure
-        await PluginCommands.Camera.Reset(plugin);
+        await PluginCommands.Camera.Reset(pluginRef.current);
         
         console.log('✅ Structure loaded successfully');
-        
-        // Re-setup selection monitoring after structure load
-        setTimeout(() => {
-          const currentPlugin = pluginRef.current;
-          if (currentPlugin) {
-            setupSelectionMonitoring(currentPlugin);
-          }
-        }, 500);
         
       } catch (error) {
         console.error('❌ Failed to load structure:', error);
@@ -559,19 +396,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       } finally {
         setIsLoading(false);
       }
-    }, [onError, setupSelectionMonitoring]);
+    }, [onError]);
 
     // Clear selection
     const clearSelection = useCallback(async (): Promise<void> => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-
       try {
-        console.log('🧹 Clearing selection');
-        
-        // Clear both selections and highlights
-        plugin.managers.interactivity.lociSelects.clear();
-        plugin.managers.interactivity.lociHighlights.clear();
+        // Clear both selections and highlights using global molstar access
+        (window as any).molstar?.managers.interactivity.lociSelects.clear();
+        (window as any).molstar?.managers.interactivity.lociHighlights.clear();
         
         // Clear current selection state
         setCurrentSelection(null);
@@ -586,45 +418,35 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Reset camera view
     const resetView = useCallback(() => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-      console.log('📷 Resetting camera view');
-      PluginCommands.Camera.Reset(plugin);
+      if (!pluginRef.current) return;
+      PluginCommands.Camera.Reset(pluginRef.current);
     }, []);
 
     // Zoom in
     const zoomIn = useCallback(() => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-      console.log('🔍 Zooming in');
-      PluginCommands.Camera.Focus(plugin, { center: Vec3.create(0, 0, 0), radius: 20 });
+      if (!pluginRef.current) return;
+      PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 20 });
     }, []);
 
     // Zoom out  
     const zoomOut = useCallback(() => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-      console.log('🔍 Zooming out');
-      PluginCommands.Camera.Focus(plugin, { center: Vec3.create(0, 0, 0), radius: 50 });
+      if (!pluginRef.current) return;
+      PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 50 });
     }, []);
 
     // Set representation type
     const setRepresentation = useCallback(async (type: 'cartoon' | 'surface' | 'ball-and-stick' | 'spacefill') => {
-      // Capture plugin reference at the start to prevent null reference errors
-      const plugin = pluginRef.current;
-      if (!plugin) return;
+      if (!pluginRef.current) return;
 
       try {
-        console.log(`🎨 Setting representation to: ${type}`);
-        
         // Remove existing representations
-        const reprs = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
+        const reprs = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
         for (const repr of reprs) {
-          await PluginCommands.State.RemoveObject(plugin, { state: plugin.state.data, ref: repr.transform.ref });
+          await PluginCommands.State.RemoveObject(pluginRef.current, { state: pluginRef.current.state.data, ref: repr.transform.ref });
         }
 
         // Get the structure
-        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) return;
 
         // Create new representation
@@ -632,12 +454,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
                         type === 'spacefill' ? 'spacefill' : 
                         type === 'surface' ? 'molecular-surface' : 'cartoon';
 
-        await plugin.builders.structure.representation.addRepresentation(structures[0], {
+        await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
           type: reprType,
           color: 'chain-id'
         });
 
-        console.log(`✅ Representation changed to: ${type}`);
       } catch (error) {
         console.error('❌ Failed to set representation:', error);
         onError?.(error as Error);
@@ -646,23 +467,19 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Show water molecules
     const showWaterMolecules = useCallback(async () => {
-      // Capture plugin reference at the start to prevent null reference errors
-      const plugin = pluginRef.current;
-      if (!plugin) return;
+      if (!pluginRef.current) return;
 
       try {
-        console.log('💧 Showing water molecules');
-        
         // First check if water representation already exists
         if (waterRepresentationRef.current) {
           throw new Error('Water molecules are already visible');
         }
 
-        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) throw new Error('No structure loaded');
 
         // Create water representation with water selection
-        const waterRepr = await plugin.builders.structure.representation.addRepresentation(structures[0], {
+        const waterRepr = await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
           type: 'ball-and-stick',
           typeParams: {
             sizeFactor: 0.3,
@@ -682,7 +499,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           waterRepresentationRef.current = waterRepr.ref;
         }
 
-        console.log('✅ Water molecules shown');
       } catch (error) {
         console.error('❌ Failed to show water molecules:', error);
         throw error;
@@ -691,34 +507,29 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Hide water molecules
     const hideWaterMolecules = useCallback(async () => {
-      // Capture plugin reference at the start to prevent null reference errors
-      const plugin = pluginRef.current;
-      if (!plugin) return;
+      if (!pluginRef.current) return;
 
       try {
-        console.log('💧 Hiding water molecules');
-        
         // Method 1: If we have a stored reference, use it
         if (waterRepresentationRef.current) {
-          await PluginCommands.State.RemoveObject(plugin, {
-            state: plugin.state.data,
+          await PluginCommands.State.RemoveObject(pluginRef.current, {
+            state: pluginRef.current.state.data,
             ref: waterRepresentationRef.current
           });
           waterRepresentationRef.current = null;
-          console.log('✅ Water molecules hidden using stored reference');
           return;
         }
 
         // Method 2: Find and remove representations with water tag
-        const representations = plugin.state.data.select(
+        const representations = pluginRef.current.state.data.select(
           StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
         );
 
         let foundWater = false;
         for (const repr of representations) {
           if (repr.transform.tags && repr.transform.tags.includes('water-representation')) {
-            await PluginCommands.State.RemoveObject(plugin, {
-              state: plugin.state.data,
+            await PluginCommands.State.RemoveObject(pluginRef.current, {
+              state: pluginRef.current.state.data,
               ref: repr.transform.ref
             });
             foundWater = true;
@@ -729,7 +540,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           throw new Error('No water molecules found to hide');
         }
 
-        console.log('✅ Water molecules hidden');
       } catch (error) {
         console.error('❌ Failed to hide water molecules:', error);
         throw error;
@@ -738,9 +548,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Hide ligands
     const hideLigands = useCallback(async () => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-
       try {
         console.log('💊 Hide ligands functionality would be implemented here');
       } catch (error) {
@@ -751,9 +558,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Focus on specific chain
     const focusOnChain = useCallback(async (chainId: string) => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-
       try {
         console.log(`🔗 Focus on chain ${chainId} functionality would be implemented here`);
       } catch (error) {
@@ -762,17 +566,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // Get selection information
+    // Get selection information - Enhanced implementation
     const getSelectionInfo = useCallback(async (): Promise<string> => {
-      const plugin = pluginRef.current;
-      if (!plugin) {
-        console.log('❌ No plugin available for getSelectionInfo');
-        return 'No plugin available';
-      }
-
       try {
-        console.log('📋 Getting selection info, current selection:', currentSelection);
-        
         if (!currentSelection) {
           return 'No atoms or residues are currently selected. Click on the protein structure to make a selection, then ask again.';
         }
@@ -802,7 +598,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           info += `• Coordinates: (${currentSelection.coordinates.x.toFixed(2)}, ${currentSelection.coordinates.y.toFixed(2)}, ${currentSelection.coordinates.z.toFixed(2)})\n`;
         }
 
-        console.log('✅ Selection info generated:', info);
         return info;
       } catch (error) {
         console.error('❌ Failed to get selection info:', error);
@@ -812,15 +607,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Get current selection
     const getCurrentSelection = useCallback(() => {
-      console.log('📋 getCurrentSelection called, returning:', currentSelection);
       return currentSelection;
     }, [currentSelection]);
 
     // Show only selected region
     const showOnlySelected = useCallback(async () => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-
       try {
         console.log('👁️ Show only selected functionality would be implemented here');
       } catch (error) {
@@ -831,9 +622,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Highlight specific chain
     const highlightChain = useCallback(async (chainId: string) => {
-      const plugin = pluginRef.current;
-      if (!plugin) return;
-
       try {
         console.log(`🎯 Highlight chain ${chainId} functionality would be implemented here`);
       } catch (error) {
@@ -844,13 +632,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Clear all highlights
     const clearHighlights = useCallback(async () => {
-      // Capture plugin reference at the start to prevent null reference errors
-      const plugin = pluginRef.current;
-      if (!plugin) return;
+      if (!pluginRef.current) return;
 
       try {
-        console.log('🧹 Clearing highlights');
-        await PluginCommands.Interactivity.ClearHighlights(plugin);
+        await PluginCommands.Interactivity.ClearHighlights(pluginRef.current);
       } catch (error) {
         console.error('❌ Failed to clear highlights:', error);
         throw error;
@@ -859,16 +644,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Get structure information
     const getStructureInfo = useCallback(async (): Promise<string> => {
-      const plugin = pluginRef.current;
-      if (!plugin) {
-        console.log('❌ No plugin available for getStructureInfo');
-        return 'No plugin available';
-      }
+      if (!pluginRef.current) return 'No plugin available';
 
       try {
-        console.log('🏗️ Getting structure info');
-        
-        const structures = plugin.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) {
           return 'No structure loaded.';
         }
@@ -893,7 +672,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             info += `• Models: ${data.models.length}\n`;
           }
           
-          console.log('✅ Structure info generated:', info);
           return info;
         }
 
@@ -941,18 +719,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
       // Cleanup on unmount
       return () => {
-        console.log('🧹 Cleaning up MolstarViewer component');
-        
-        // Clean up all subscriptions
-        subscriptionsRef.current.forEach(sub => {
-          try {
-            sub.unsubscribe();
-          } catch (e) {
-            console.log('⚠️ Error during subscription cleanup:', e);
-          }
-        });
-        subscriptionsRef.current = [];
-        
+        if (selectionSubscriptionRef.current) {
+          selectionSubscriptionRef.current.unsubscribe();
+        }
         if (pluginRef.current) {
           pluginRef.current.dispose();
           pluginRef.current = null;
@@ -961,20 +730,16 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     }, [initializePlugin]);
 
     return (
-      <Card className={cn("relative w-full h-full bg-gray-900 border-gray-700 overflow-hidden", className)}>
+      <Card className={cn("relative w-full h-full bg-gray-900 border-gray-700", className)}>
         <div 
           ref={containerRef} 
-          className="w-full h-full rounded-lg"
-          style={{ 
-            minHeight: '400px',
-            contain: 'layout style size',
-            position: 'relative'
-          }}
+          className="w-full h-full rounded-lg overflow-hidden"
+          style={{ minHeight: '400px' }}
         />
         
         {/* Loading overlay */}
         {isLoading && (
-          <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center rounded-lg z-50">
+          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded-lg">
             <div className="flex items-center space-x-2 text-white">
               <Loader2 className="h-6 w-6 animate-spin" />
               <span>Loading structure...</span>
@@ -982,16 +747,46 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           </div>
         )}
 
+        {/* Basic controls overlay */}
+        {isInitialized && !isLoading && (
+          <div className="absolute top-4 right-4 flex flex-col space-y-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={resetView}
+              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
+            >
+              <Home className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={zoomIn}
+              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
+            >
+              <ZoomIn className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={zoomOut}
+              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
+            >
+              <ZoomOut className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+
         {/* Selection info overlay */}
         {currentSelection && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-40 pointer-events-none">
-            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm max-w-sm">
+          <div className="absolute bottom-4 left-4 right-4">
+            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm">
               <div className="p-3">
-                <p className="text-white text-sm font-medium text-center">
+                <p className="text-white text-sm font-medium">
                   Selected: {currentSelection.description}
                 </p>
                 {currentSelection.coordinates && (
-                  <p className="text-gray-400 text-xs mt-1 text-center">
+                  <p className="text-gray-400 text-xs mt-1">
                     Position: ({currentSelection.coordinates.x.toFixed(2)}, {currentSelection.coordinates.y.toFixed(2)}, {currentSelection.coordinates.z.toFixed(2)})
                   </p>
                 )}
