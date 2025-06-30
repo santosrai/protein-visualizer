@@ -417,48 +417,99 @@ export class MolstarCommandProcessor {
   }
 
   parseCommand(input: string): { command: string; params?: any } | null {
-    console.log('🔍 Parsing command:', input);
+    console.log('🔍 Parsing command input:', `"${input}"`);
     
-    // Parse commands like "zoom_chain A" or "highlight_chain B"
-    const parts = input.trim().split(' ');
-    const command = parts[0];
+    // Clean and normalize input
+    const cleanInput = input.trim().toLowerCase();
     
-    // Handle selection-related queries
-    if (input.toLowerCase().includes('what is selected') || input.toLowerCase().includes('what\'s selected')) {
+    // Handle selection-related queries FIRST (highest priority)
+    if (cleanInput.includes('what is selected') || cleanInput.includes('what\'s selected')) {
+      console.log('✅ Matched: what_is_selected');
       return { command: 'what_is_selected' };
     }
     
-    if (input.toLowerCase().includes('analyze selection') || input.toLowerCase().includes('analyze my selection')) {
+    if (cleanInput.includes('analyze selection') || cleanInput.includes('analyze my selection')) {
+      console.log('✅ Matched: analyze_selection');
       return { command: 'analyze_selection' };
     }
 
-    if (input.toLowerCase().includes('clear selection')) {
+    if (cleanInput.includes('clear selection')) {
+      console.log('✅ Matched: clear_selection');
       return { command: 'clear_selection' };
     }
 
-    // Handle "show only selected" commands
-    if (input.toLowerCase().includes('show only selected') || 
-        input.toLowerCase().includes('show selected only') ||
-        input.toLowerCase().includes('hide everything else') ||
-        input.toLowerCase().includes('show just selected')) {
+    // Handle show/hide commands SECOND (high priority)
+    if (cleanInput.includes('show only selected') || 
+        cleanInput.includes('show selected only') ||
+        cleanInput.includes('hide everything else') ||
+        cleanInput.includes('show just selected')) {
+      console.log('✅ Matched: show_only_selected');
       return { command: 'show_only_selected' };
     }
 
-    // Handle "show full structure" or "restore view" commands
-    if (input.toLowerCase().includes('show full structure') || 
-        input.toLowerCase().includes('show entire structure') ||
-        input.toLowerCase().includes('restore view') ||
-        input.toLowerCase().includes('show all') ||
-        input.toLowerCase().includes('unhide')) {
+    if (cleanInput.includes('show full structure') || 
+        cleanInput.includes('show entire structure') ||
+        cleanInput.includes('restore view') ||
+        cleanInput.includes('show all') ||
+        cleanInput.includes('unhide')) {
+      console.log('✅ Matched: show_full_structure');
       return { command: 'show_full_structure' };
     }
 
-    // Parse residue range selection commands with multiple patterns
-    // Pattern 1: "select residues 12-200 in chain A" or "select residues 1-1 in chain A"
-    const residueRangeRegex1 = /select.*?(?:residues?)\s*(\d+)[\s\-]+(\d+).*?(?:chain|in)\s*([A-Za-z])/i;
-    const match1 = input.match(residueRangeRegex1);
+    // SINGLE RESIDUE SELECTION - Check this BEFORE range patterns to avoid conflicts
+    // Pattern: "select residue X in chain Y" (must be very specific)
+    const singleResidueRegex = /select\s+residue\s+(\d+)\s+in\s+chain\s+([a-z])/i;
+    const singleMatch = cleanInput.match(singleResidueRegex);
+    if (singleMatch) {
+      console.log('✅ Matched single residue pattern:', singleMatch);
+      console.log('  - Residue:', singleMatch[1]);
+      console.log('  - Chain:', singleMatch[2].toUpperCase());
+      return {
+        command: 'select_residue',
+        params: {
+          residueId: singleMatch[1],
+          chainId: singleMatch[2].toUpperCase()
+        }
+      };
+    }
+
+    // Alternative single residue pattern: "select residue X chain Y"
+    const singleResidueRegex2 = /select\s+residue\s+(\d+)\s+chain\s+([a-z])/i;
+    const singleMatch2 = cleanInput.match(singleResidueRegex2);
+    if (singleMatch2) {
+      console.log('✅ Matched single residue pattern 2:', singleMatch2);
+      console.log('  - Residue:', singleMatch2[1]);
+      console.log('  - Chain:', singleMatch2[2].toUpperCase());
+      return {
+        command: 'select_residue',
+        params: {
+          residueId: singleMatch2[1],
+          chainId: singleMatch2[2].toUpperCase()
+        }
+      };
+    }
+
+    // Simple residue selection without chain: "select residue X"
+    const simpleResidueRegex = /select\s+residue\s+(\d+)(?!\s*[-\sto])/i;
+    const simpleMatch = cleanInput.match(simpleResidueRegex);
+    if (simpleMatch) {
+      console.log('✅ Matched simple residue pattern:', simpleMatch);
+      console.log('  - Residue:', simpleMatch[1]);
+      return {
+        command: 'select_residue',
+        params: {
+          residueId: simpleMatch[1]
+        }
+      };
+    }
+
+    // RESIDUE RANGE SELECTION PATTERNS (check after single residue)
+    
+    // Pattern 1: "select residues X-Y in chain Z" or "select residues X to Y in chain Z"
+    const residueRangeRegex1 = /select\s+residues\s+(\d+)[\s\-to]+(\d+)\s+in\s+chain\s+([a-z])/i;
+    const match1 = cleanInput.match(residueRangeRegex1);
     if (match1) {
-      console.log('✅ Matched pattern 1:', match1);
+      console.log('✅ Matched range pattern 1:', match1);
       return {
         command: 'select_residue_range',
         params: {
@@ -469,11 +520,11 @@ export class MolstarCommandProcessor {
       };
     }
 
-    // Pattern 2: "select chain A residues 50 to 150"
-    const residueRangeRegex2 = /select.*?chain\s*([A-Za-z]).*?(?:residues?)\s*(\d+)[\s\-to]+(\d+)/i;
-    const match2 = input.match(residueRangeRegex2);
+    // Pattern 2: "select chain X residues Y to Z"
+    const residueRangeRegex2 = /select\s+chain\s+([a-z])\s+residues\s+(\d+)[\s\-to]+(\d+)/i;
+    const match2 = cleanInput.match(residueRangeRegex2);
     if (match2) {
-      console.log('✅ Matched pattern 2:', match2);
+      console.log('✅ Matched range pattern 2:', match2);
       return {
         command: 'select_residue_range',
         params: {
@@ -484,11 +535,11 @@ export class MolstarCommandProcessor {
       };
     }
 
-    // Pattern 3: "select residues 1 to 1 chain A" or similar variations
-    const residueRangeRegex3 = /select.*?(?:residues?)\s*(\d+)\s*(?:to|through|\-)\s*(\d+).*?chain\s*([A-Za-z])/i;
-    const match3 = input.match(residueRangeRegex3);
+    // Pattern 3: "select residues X to Y chain Z"
+    const residueRangeRegex3 = /select\s+residues\s+(\d+)\s+(?:to|through|\-)\s+(\d+)\s+chain\s+([a-z])/i;
+    const match3 = cleanInput.match(residueRangeRegex3);
     if (match3) {
-      console.log('✅ Matched pattern 3:', match3);
+      console.log('✅ Matched range pattern 3:', match3);
       return {
         command: 'select_residue_range',
         params: {
@@ -499,32 +550,9 @@ export class MolstarCommandProcessor {
       };
     }
 
-    // Pattern 4: Handle single residue selections "select residue 1 in chain A"
-    const singleResidueRegex = /select.*?(?:residue)\s*(\d+).*?(?:chain|in)\s*([A-Za-z])/i;
-    const singleMatch = input.match(singleResidueRegex);
-    if (singleMatch) {
-      console.log('✅ Matched single residue pattern:', singleMatch);
-      return {
-        command: 'select_residue',
-        params: {
-          residueId: singleMatch[1],
-          chainId: singleMatch[2].toUpperCase()
-        }
-      };
-    }
-
-    // Pattern 5: Simple residue selection without chain "select residue 1"
-    const simpleResidueRegex = /select.*?(?:residue)\s*(\d+)/i;
-    const simpleMatch = input.match(simpleResidueRegex);
-    if (simpleMatch) {
-      console.log('✅ Matched simple residue pattern:', simpleMatch);
-      return {
-        command: 'select_residue',
-        params: {
-          residueId: simpleMatch[1]
-        }
-      };
-    }
+    // BASIC COMMAND PARSING (original functionality)
+    const parts = cleanInput.split(' ');
+    const command = parts[0];
     
     if (this.commands.has(command)) {
       const params: any = {};
@@ -533,10 +561,11 @@ export class MolstarCommandProcessor {
         params.chainId = parts[1] ? parts[1].toUpperCase() : 'A';
       }
       
+      console.log('✅ Matched basic command:', command, 'with params:', params);
       return { command, params };
     }
     
-    console.log('❌ No command pattern matched for:', input);
+    console.log('❌ No command pattern matched for:', `"${input}"`);
     return null;
   }
 
