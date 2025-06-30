@@ -84,7 +84,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const originalRepresentationsRef = useRef<string[]>([]);
     const selectionOnlyModeRef = useRef<boolean>(false);
     
-    // CRITICAL FIX: Enhanced state management
+    // Enhanced state management
     const mountedRef = useRef<boolean>(true);
     const initializingRef = useRef<boolean>(false);
     const instanceIdRef = useRef<string>(`molstar-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
@@ -115,7 +115,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return spec;
     }, []);
 
-    // ENHANCED: Extract selection information with comprehensive error handling
+    // Extract selection information with comprehensive error handling
     const extractSelectionInfo = useCallback((location: StructureElement.Location): SelectionInfo | null => {
       try {
         console.log('🔍 Extracting selection info from location:', location);
@@ -170,7 +170,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // ENHANCED: Helper function to update selection state with mount checking
+    // Helper function to update selection state with mount checking
     const updateSelectionState = useCallback((selectionInfo: SelectionInfo | null) => {
       if (!mountedRef.current) {
         console.log('⚠️ Component unmounted - skipping selection update');
@@ -188,7 +188,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [onSelectionChange]);
 
-    // ENHANCED: Safe interaction event processing
+    // Safe interaction event processing
     const processInteractionEvent = useCallback((eventData: any) => {
       if (!mountedRef.current) return;
       
@@ -252,7 +252,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [extractSelectionInfo, updateSelectionState]);
 
-    // ENHANCED: Robust selection monitoring setup
+    // Robust selection monitoring setup
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
       console.log('🔍 Setting up enhanced selection monitoring...');
       
@@ -330,7 +330,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [processInteractionEvent, updateSelectionState]);
 
-    // ENHANCED: Safe manual extraction for programmatic selections
+    // Safe manual extraction for programmatic selections
     const extractSelectionFromLoci = useCallback((loci: any): SelectionInfo | null => {
       try {
         console.log('🔍 Extracting selection from loci:', loci);
@@ -389,7 +389,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [extractSelectionInfo]);
 
-    // ENHANCED: Robust single residue selection
+    // Robust single residue selection
     const selectResidue = useCallback(async (selectedResidue: number, chainId?: string): Promise<string> => {
       console.log(`🎯 selectResidue called with residue: ${selectedResidue}, chain: ${chainId}`);
       
@@ -672,7 +672,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // CRITICAL FIX: Comprehensive cleanup function
+    // Comprehensive cleanup function
     const cleanupPlugin = useCallback(() => {
       console.log('🧹 Starting comprehensive plugin cleanup...');
       
@@ -759,7 +759,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       console.log('✅ Plugin cleanup completed');
     }, []);
 
-    // CRITICAL FIX: Enhanced initialization with prevention of multiple React roots
+    // Enhanced initialization with prevention of multiple React roots
     const initializePlugin = useCallback(async () => {
       const instanceId = instanceIdRef.current;
       
@@ -1192,7 +1192,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       selectResidueRange, clearSelection, selectResidue
     ]);
 
-    // CRITICAL FIX: Enhanced mount and unmount handling
+    // Enhanced mount and unmount handling
     useEffect(() => {
       // Set mounted flag
       mountedRef.current = true;
@@ -1220,17 +1220,23 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     }, [initializePlugin, cleanupPlugin]);
 
     return (
-      <Card className={cn("relative w-full h-full bg-gray-900 border-gray-700", className)}>
+      <div className={cn("relative w-full h-full", className)}>
+        {/* CRITICAL FIX: Molstar container with constrained dimensions */}
         <div 
           ref={containerRef} 
-          className="w-full h-full rounded-lg overflow-hidden"
-          style={{ minHeight: '400px' }}
+          className="w-full h-full rounded-lg overflow-hidden bg-gray-900 border border-gray-700"
+          style={{ 
+            minHeight: '400px',
+            maxWidth: '100%',
+            maxHeight: '100%',
+            pointerEvents: 'auto' // Ensure container can receive events
+          }}
           data-molstar-container={instanceIdRef.current}
         />
         
         {/* Loading overlay */}
         {isLoading && (
-          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded-lg">
+          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded-lg z-10">
             <div className="flex items-center space-x-2 text-white">
               <Loader2 className="h-6 w-6 animate-spin" />
               <span>Loading structure...</span>
@@ -1238,14 +1244,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           </div>
         )}
 
-        {/* Basic controls overlay */}
+        {/* Basic controls overlay - FIXED: Proper z-index and pointer events */}
         {isInitialized && !isLoading && (
-          <div className="absolute top-4 right-4 flex flex-col space-y-2">
+          <div className="absolute top-4 right-4 flex flex-col space-y-2 z-20" style={{ pointerEvents: 'auto' }}>
             <Button
               size="sm"
               variant="secondary"
               onClick={resetView}
-              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
+              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600 pointer-events-auto"
             >
               <Home className="h-4 w-4" />
             </Button>
@@ -1253,7 +1259,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
               size="sm"
               variant="secondary"
               onClick={zoomIn}
-              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
+              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600 pointer-events-auto"
             >
               <ZoomIn className="h-4 w-4" />
             </Button>
@@ -1261,17 +1267,17 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
               size="sm"
               variant="secondary"
               onClick={zoomOut}
-              className="bg-gray-800/80 hover:bg-gray-700 text-white border-gray-600"
+              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600 pointer-events-auto"
             >
               <ZoomOut className="h-4 w-4" />
             </Button>
           </div>
         )}
 
-        {/* Selection info overlay */}
+        {/* Selection info overlay - FIXED: Proper z-index */}
         {currentSelection && (
-          <div className="absolute bottom-4 left-4 right-4">
-            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm">
+          <div className="absolute bottom-4 left-4 right-4 z-20" style={{ pointerEvents: 'none' }}>
+            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm pointer-events-auto">
               <div className="p-3">
                 <p className="text-white text-sm font-medium">
                   Selected: {currentSelection.description}
@@ -1285,7 +1291,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             </Card>
           </div>
         )}
-      </Card>
+      </div>
     );
   }
 );
