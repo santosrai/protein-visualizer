@@ -91,9 +91,35 @@ export class MolstarCommandProcessor {
       execute: async (viewer) => {
         try {
           await viewer.showOnlySelected();
-          return 'Now showing only the selected region.';
+          return '✅ Now showing only the selected region. The rest of the structure has been hidden.\n\nTo restore the full structure view, use the command "show full structure" or "restore view".';
         } catch (error) {
           return 'Failed to show only selected region. Please make a selection first.';
+        }
+      }
+    });
+
+    this.commands.set('show_full_structure', {
+      name: 'show_full_structure',
+      description: 'Show the full structure (restore from selection-only view)',
+      execute: async (viewer) => {
+        try {
+          await viewer.hideOnlySelected();
+          return '✅ Full structure view restored. All parts of the structure are now visible again.';
+        } catch (error) {
+          return 'Failed to restore full structure view.';
+        }
+      }
+    });
+
+    this.commands.set('restore_view', {
+      name: 'restore_view',
+      description: 'Restore full structure view',
+      execute: async (viewer) => {
+        try {
+          await viewer.hideOnlySelected();
+          return '✅ View restored to show the full structure.';
+        } catch (error) {
+          return 'Failed to restore view.';
         }
       }
     });
@@ -186,67 +212,6 @@ export class MolstarCommandProcessor {
           return info || 'No structure information available.';
         } catch (error) {
           return 'Failed to get structure information.';
-        }
-      }
-    });
-
-    // Add new selection-focused commands
-    this.commands.set('what_is_selected', {
-      name: 'what_is_selected',
-      description: 'Get detailed information about current selection',
-      execute: async (viewer) => {
-        try {
-          const selection = viewer.getCurrentSelection();
-          if (!selection) {
-            return 'Nothing is currently selected. Click on an atom or residue in the 3D viewer to select it.';
-          }
-          
-          let response = `**Selection Analysis:**\n\n`;
-          response += `${selection.description}\n\n`;
-          
-          if (selection.residueName) {
-            response += `**Residue Information:**\n`;
-            response += `- Name: ${selection.residueName}\n`;
-            response += `- Number: ${selection.residueNumber}\n`;
-            response += `- Chain: ${selection.chainId}\n`;
-            
-            // Add amino acid properties
-            const aaInfo = this.getAminoAcidInfo(selection.residueName);
-            if (aaInfo) {
-              response += `- Type: ${aaInfo.type}\n`;
-              response += `- Properties: ${aaInfo.properties.join(', ')}\n`;
-              response += `- Description: ${aaInfo.description}\n`;
-            }
-          }
-          
-          if (selection.atomName && selection.elementType) {
-            response += `\n**Atom Information:**\n`;
-            response += `- Atom Name: ${selection.atomName}\n`;
-            response += `- Element: ${selection.elementType}\n`;
-          }
-          
-          if (selection.coordinates) {
-            response += `\n**Position:**\n`;
-            response += `- X: ${selection.coordinates.x.toFixed(3)} Å\n`;
-            response += `- Y: ${selection.coordinates.y.toFixed(3)} Å\n`;
-            response += `- Z: ${selection.coordinates.z.toFixed(3)} Å\n`;
-          }
-          
-          return response;
-        } catch (error) {
-          return 'Failed to analyze selection.';
-        }
-      }
-    });
-
-    this.commands.set('analyze_selection', {
-      name: 'analyze_selection',
-      description: 'Provide detailed analysis of the selected residue/atom',
-      execute: async (viewer) => {
-        try {
-          return await this.commands.get('what_is_selected')!.execute(viewer);
-        } catch (error) {
-          return 'Failed to analyze selection.';
         }
       }
     });
@@ -348,6 +313,67 @@ export class MolstarCommandProcessor {
         }
       }
     });
+
+    // Add new selection-focused commands
+    this.commands.set('what_is_selected', {
+      name: 'what_is_selected',
+      description: 'Get detailed information about current selection',
+      execute: async (viewer) => {
+        try {
+          const selection = viewer.getCurrentSelection();
+          if (!selection) {
+            return 'Nothing is currently selected. Click on an atom or residue in the 3D viewer to select it.';
+          }
+          
+          let response = `**Selection Analysis:**\n\n`;
+          response += `${selection.description}\n\n`;
+          
+          if (selection.residueName) {
+            response += `**Residue Information:**\n`;
+            response += `- Name: ${selection.residueName}\n`;
+            response += `- Number: ${selection.residueNumber}\n`;
+            response += `- Chain: ${selection.chainId}\n`;
+            
+            // Add amino acid properties
+            const aaInfo = this.getAminoAcidInfo(selection.residueName);
+            if (aaInfo) {
+              response += `- Type: ${aaInfo.type}\n`;
+              response += `- Properties: ${aaInfo.properties.join(', ')}\n`;
+              response += `- Description: ${aaInfo.description}\n`;
+            }
+          }
+          
+          if (selection.atomName && selection.elementType) {
+            response += `\n**Atom Information:**\n`;
+            response += `- Atom Name: ${selection.atomName}\n`;
+            response += `- Element: ${selection.elementType}\n`;
+          }
+          
+          if (selection.coordinates) {
+            response += `\n**Position:**\n`;
+            response += `- X: ${selection.coordinates.x.toFixed(3)} Å\n`;
+            response += `- Y: ${selection.coordinates.y.toFixed(3)} Å\n`;
+            response += `- Z: ${selection.coordinates.z.toFixed(3)} Å\n`;
+          }
+          
+          return response;
+        } catch (error) {
+          return 'Failed to analyze selection.';
+        }
+      }
+    });
+
+    this.commands.set('analyze_selection', {
+      name: 'analyze_selection',
+      description: 'Provide detailed analysis of the selected residue/atom',
+      execute: async (viewer) => {
+        try {
+          return await this.commands.get('what_is_selected')!.execute(viewer);
+        } catch (error) {
+          return 'Failed to analyze selection.';
+        }
+      }
+    });
   }
 
   private getAminoAcidInfo(residueName: string): { type: string; properties: string[]; description: string } | null {
@@ -408,6 +434,23 @@ export class MolstarCommandProcessor {
 
     if (input.toLowerCase().includes('clear selection')) {
       return { command: 'clear_selection' };
+    }
+
+    // Handle "show only selected" commands
+    if (input.toLowerCase().includes('show only selected') || 
+        input.toLowerCase().includes('show selected only') ||
+        input.toLowerCase().includes('hide everything else') ||
+        input.toLowerCase().includes('show just selected')) {
+      return { command: 'show_only_selected' };
+    }
+
+    // Handle "show full structure" or "restore view" commands
+    if (input.toLowerCase().includes('show full structure') || 
+        input.toLowerCase().includes('show entire structure') ||
+        input.toLowerCase().includes('restore view') ||
+        input.toLowerCase().includes('show all') ||
+        input.toLowerCase().includes('unhide')) {
+      return { command: 'show_full_structure' };
     }
 
     // Parse residue range selection commands with multiple patterns

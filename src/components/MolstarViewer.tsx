@@ -36,6 +36,8 @@ export interface SelectionInfo {
   elementType?: string;
   description: string;
   coordinates?: { x: number; y: number; z: number };
+  rangeStart?: number;
+  rangeEnd?: number;
 }
 
 export interface ResidueRangeQuery {
@@ -57,6 +59,7 @@ export interface ViewerControls {
   focusOnChain: (chainId: string) => Promise<void>;
   getSelectionInfo: () => Promise<string>;
   showOnlySelected: () => Promise<void>;
+  hideOnlySelected: () => Promise<void>;
   highlightChain: (chainId: string) => Promise<void>;
   clearHighlights: () => Promise<void>;
   getStructureInfo: () => Promise<string>;
@@ -75,6 +78,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
     const waterRepresentationRef = useRef<string | null>(null);
     const selectionSubscriptionRef = useRef<any>(null);
+    const originalRepresentationsRef = useRef<string[]>([]);
+    const selectionOnlyModeRef = useRef<boolean>(false);
 
     // Create the plugin specification with minimal UI
     const createSpec = useCallback(() => {
@@ -229,7 +234,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           chainId: query.chainId,
           residueNumber: query.startResidue,
           atomCount: totalAtoms,
-          description: `Chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue} (${estimatedResidues} residues)`
+          description: `Chain ${query.chainId}, residues ${query.startResidue}-${query.endResidue} (${estimatedResidues} residues)`,
+          rangeStart: query.startResidue,
+          rangeEnd: query.endResidue
         };
 
         setCurrentSelection(selectionInfo);
@@ -327,6 +334,155 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       };
     }, [extractSelectionInfo, onSelectionChange]);
 
+    // Show only selected region - IMPLEMENTED!
+    const showOnlySelected = useCallback(async (): Promise<void> => {
+      if (!pluginRef.current || !currentSelection) {
+        throw new Error('No selection available or plugin not ready');
+      }
+
+      try {
+        console.log('👁️ Starting show only selected for:', currentSelection);
+
+        // Store current representations for later restoration
+        const currentReprs = pluginRef.current.state.data.select(
+          StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
+        );
+        originalRepresentationsRef.current = currentReprs.map(repr => repr.transform.ref);
+
+        // Remove all existing representations
+        for (const repr of currentReprs) {
+          await PluginCommands.State.RemoveObject(pluginRef.current, {
+            state: pluginRef.current.state.data,
+            ref: repr.transform.ref
+          });
+        }
+
+        // Get the structure
+        const structures = pluginRef.current.state.data.select(
+          StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure)
+        );
+        if (structures.length === 0) {
+          throw new Error('No structure available');
+        }
+
+        const structure = structures[0];
+        const data = structure.obj?.data;
+        if (!data) {
+          throw new Error('No structure data available');
+        }
+
+        // Create selection for the current selection
+        let sel;
+        if (currentSelection.rangeStart && currentSelection.rangeEnd && currentSelection.chainId) {
+          // Handle range selection
+          sel = Script.getStructureSelection(
+            (Q: any) =>
+              Q.struct.generator.atomGroups({
+                "chain-test": Q.core.rel.eq([
+                  Q.struct.atomProperty.macromolecular.auth_asym_id(),
+                  currentSelection.chainId
+                ]),
+                "residue-test": Q.core.rel.inRange([
+                  Q.struct.atomProperty.macromolecular.label_seq_id(),
+                  currentSelection.rangeStart,
+                  currentSelection.rangeEnd
+                ]),
+                "group-by": Q.struct.atomProperty.macromolecular.residueKey(),
+              }),
+            data
+          );
+        } else if (currentSelection.residueNumber && currentSelection.chainId) {
+          // Handle single residue selection
+          sel = Script.getStructureSelection(
+            (Q: any) =>
+              Q.struct.generator.atomGroups({
+                "chain-test": Q.core.rel.eq([
+                  Q.struct.atomProperty.macromolecular.auth_asym_id(),
+                  currentSelection.chainId
+                ]),
+                "residue-test": Q.core.rel.eq([
+                  Q.struct.atomProperty.macromolecular.label_seq_id(),
+                  currentSelection.residueNumber,
+                ]),
+                "group-by": Q.struct.atomProperty.macromolecular.residueKey(),
+              }),
+            data
+          );
+        } else {
+          throw new Error('Invalid selection - missing chain or residue information');
+        }
+
+        // Create a new structure with only the selected part
+        const selectedStructure = await pluginRef.current.builders.structure.createStructure(
+          structure,
+          { selection: sel }
+        );
+
+        // Create representation for the selected structure only
+        await pluginRef.current.builders.structure.representation.addRepresentation(selectedStructure, {
+          type: 'cartoon',
+          color: 'chain-id'
+        });
+
+        // Focus camera on the selected region
+        const loci = StructureSelection.toLociWithSourceUnits(sel);
+        if (loci.elements && loci.elements.length > 0) {
+          await PluginCommands.Camera.Focus(pluginRef.current, { loci });
+        }
+
+        selectionOnlyModeRef.current = true;
+        console.log('✅ Successfully showing only selected region');
+
+      } catch (error) {
+        console.error('❌ Failed to show only selected:', error);
+        throw error;
+      }
+    }, [currentSelection]);
+
+    // Hide only selected (restore full structure) - NEW!
+    const hideOnlySelected = useCallback(async (): Promise<void> => {
+      if (!pluginRef.current || !selectionOnlyModeRef.current) {
+        return; // Not in selection-only mode
+      }
+
+      try {
+        console.log('👁️ Restoring full structure view');
+
+        // Remove current representations
+        const currentReprs = pluginRef.current.state.data.select(
+          StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
+        );
+        for (const repr of currentReprs) {
+          await PluginCommands.State.RemoveObject(pluginRef.current, {
+            state: pluginRef.current.state.data,
+            ref: repr.transform.ref
+          });
+        }
+
+        // Get the main structure and recreate full representation
+        const structures = pluginRef.current.state.data.select(
+          StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure)
+        );
+        if (structures.length > 0) {
+          await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
+            type: 'cartoon',
+            color: 'chain-id'
+          });
+        }
+
+        // Reset camera to show full structure
+        await PluginCommands.Camera.Reset(pluginRef.current);
+
+        selectionOnlyModeRef.current = false;
+        originalRepresentationsRef.current = [];
+        console.log('✅ Successfully restored full structure view');
+
+      } catch (error) {
+        console.error('❌ Failed to restore full structure:', error);
+        throw error;
+      }
+    }, []);
+
     // Initialize the molstar plugin
     const initializePlugin = useCallback(async () => {
       if (!containerRef.current || pluginRef.current) return;
@@ -372,6 +528,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         });
         waterRepresentationRef.current = null;
         setCurrentSelection(null);
+        selectionOnlyModeRef.current = false;
+        originalRepresentationsRef.current = [];
 
         // Download and load the structure
         const data = await pluginRef.current.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
@@ -610,16 +768,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return currentSelection;
     }, [currentSelection]);
 
-    // Show only selected region
-    const showOnlySelected = useCallback(async () => {
-      try {
-        console.log('👁️ Show only selected functionality would be implemented here');
-      } catch (error) {
-        console.error('❌ Failed to show only selected:', error);
-        throw error;
-      }
-    }, []);
-
     // Highlight specific chain
     const highlightChain = useCallback(async (chainId: string) => {
       try {
@@ -699,6 +847,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       focusOnChain,
       getSelectionInfo,
       showOnlySelected,
+      hideOnlySelected,
       highlightChain,
       clearHighlights,
       getStructureInfo,
@@ -709,7 +858,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     }), [
       loadStructure, resetView, zoomIn, zoomOut, setRepresentation, getPlugin,
       showWaterMolecules, hideWaterMolecules, hideLigands, focusOnChain, getSelectionInfo,
-      showOnlySelected, highlightChain, clearHighlights, getStructureInfo, getCurrentSelection,
+      showOnlySelected, hideOnlySelected, highlightChain, clearHighlights, getStructureInfo, getCurrentSelection,
       selectResidueRange, clearSelection, selectResidue
     ]);
 
