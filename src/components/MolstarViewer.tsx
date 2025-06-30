@@ -80,6 +80,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const selectionSubscriptionRef = useRef<any>(null);
     const originalRepresentationsRef = useRef<string[]>([]);
     const selectionOnlyModeRef = useRef<boolean>(false);
+    
+    // CRITICAL FIX: Add initialization state management
+    const initializingRef = useRef<boolean>(false);
+    const mountedRef = useRef<boolean>(true);
 
     // Create the plugin specification with minimal UI
     const createSpec = useCallback(() => {
@@ -156,6 +160,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // ENHANCED: Helper function to update selection state
     const updateSelectionState = useCallback((selectionInfo: SelectionInfo | null) => {
+      if (!mountedRef.current) return; // Prevent updates if component is unmounted
+      
       console.log('🔄 Updating selection state:', selectionInfo);
       setCurrentSelection(selectionInfo);
       onSelectionChange?.(selectionInfo);
@@ -178,6 +184,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
       // Method 1: Listen to structure selection manager changes (most reliable)
       const selectionSubscription = plugin.managers.structure.selection.events.changed.subscribe(() => {
+        if (!mountedRef.current) return; // Prevent updates if unmounted
+        
         console.log('🎯 Structure selection manager event fired');
         
         try {
@@ -222,10 +230,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
       // Method 2: Listen to interaction events as backup
       const interactionSubscription = plugin.behaviors.interaction.click.subscribe((event) => {
+        if (!mountedRef.current) return; // Prevent updates if unmounted
+        
         console.log('🖱️ Click interaction event fired');
         
         // Small delay to allow selection to be processed
         setTimeout(() => {
+          if (!mountedRef.current) return; // Check again after delay
+          
           try {
             // Check current highlights as a backup method
             const currentLoci = plugin.managers.interactivity.lociHighlights.current.loci;
@@ -686,18 +698,104 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // Initialize the molstar plugin
+    // CRITICAL FIX: Enhanced cleanup function
+    const cleanupPlugin = useCallback(() => {
+      console.log('🧹 Starting plugin cleanup...');
+      
+      // Set mounted to false to prevent any further updates
+      mountedRef.current = false;
+      
+      // Clean up subscriptions first
+      if (selectionSubscriptionRef.current) {
+        try {
+          selectionSubscriptionRef.current.unsubscribe();
+          selectionSubscriptionRef.current = null;
+          console.log('✅ Selection subscriptions cleaned up');
+        } catch (error) {
+          console.log('⚠️ Error cleaning up subscriptions:', error);
+        }
+      }
+      
+      // Clean up global molstar reference
+      if ((window as any).molstar) {
+        (window as any).molstar = null;
+        console.log('✅ Global molstar reference cleared');
+      }
+      
+      // Dispose of plugin
+      if (pluginRef.current) {
+        try {
+          pluginRef.current.dispose();
+          console.log('✅ Plugin disposed');
+        } catch (error) {
+          console.log('⚠️ Error disposing plugin:', error);
+        }
+        pluginRef.current = null;
+      }
+      
+      // Clear container to ensure no React roots remain
+      if (containerRef.current) {
+        try {
+          // Clear any existing content completely
+          containerRef.current.innerHTML = '';
+          console.log('✅ Container cleared');
+        } catch (error) {
+          console.log('⚠️ Error clearing container:', error);
+        }
+      }
+      
+      // Reset all state
+      setIsInitialized(false);
+      setIsLoading(false);
+      setCurrentSelection(null);
+      waterRepresentationRef.current = null;
+      originalRepresentationsRef.current = [];
+      selectionOnlyModeRef.current = false;
+      initializingRef.current = false;
+      
+      console.log('✅ Plugin cleanup completed');
+    }, []);
+
+    // CRITICAL FIX: Initialize the molstar plugin with proper error handling
     const initializePlugin = useCallback(async () => {
-      if (!containerRef.current || pluginRef.current) return;
+      // Prevent multiple initializations
+      if (!containerRef.current || pluginRef.current || initializingRef.current) {
+        console.log('⚠️ Plugin initialization skipped - already initialized or in progress');
+        return;
+      }
+
+      // Check if component is still mounted
+      if (!mountedRef.current) {
+        console.log('⚠️ Plugin initialization skipped - component unmounted');
+        return;
+      }
 
       try {
+        console.log('🚀 Starting plugin initialization...');
+        initializingRef.current = true;
         setIsLoading(true);
+        
+        // Clear container completely before initializing
+        if (containerRef.current) {
+          containerRef.current.innerHTML = '';
+        }
+        
         const spec = createSpec();
+        console.log('✅ Plugin spec created');
+        
         const plugin = await createPluginUI({
           target: containerRef.current,
           render: renderReact18,
           spec
         });
+        
+        // Check if component is still mounted after async operation
+        if (!mountedRef.current) {
+          console.log('⚠️ Component unmounted during initialization - cleaning up');
+          plugin.dispose();
+          return;
+        }
+        
         pluginRef.current = plugin;
         
         // Make molstar globally accessible (critical for your working approach)
@@ -709,11 +807,18 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         setIsInitialized(true);
         onReady?.(plugin);
+        console.log('✅ Plugin initialization completed successfully');
+        
       } catch (error) {
         console.error('❌ Failed to initialize molstar plugin:', error);
         onError?.(error as Error);
+        
+        // Reset initialization state on error
+        initializingRef.current = false;
+        setIsInitialized(false);
       } finally {
         setIsLoading(false);
+        initializingRef.current = false;
       }
     }, [createSpec, onReady, onError, setupSelectionMonitoring]);
 
@@ -1064,21 +1169,20 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       selectResidueRange, clearSelection, selectResidue
     ]);
 
-    // Initialize plugin on mount
+    // CRITICAL FIX: Initialize plugin on mount with proper cleanup
     useEffect(() => {
+      // Set mounted flag
+      mountedRef.current = true;
+      console.log('🎯 Component mounting - initializing plugin');
+      
       initializePlugin();
 
-      // Cleanup on unmount
+      // Cleanup function
       return () => {
-        if (selectionSubscriptionRef.current) {
-          selectionSubscriptionRef.current.unsubscribe();
-        }
-        if (pluginRef.current) {
-          pluginRef.current.dispose();
-          pluginRef.current = null;
-        }
+        console.log('🎯 Component unmounting - starting cleanup');
+        cleanupPlugin();
       };
-    }, [initializePlugin]);
+    }, [initializePlugin, cleanupPlugin]);
 
     return (
       <Card className={cn("relative w-full h-full bg-gray-900 border-gray-700", className)}>
