@@ -12,7 +12,7 @@ import { Separator } from './components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { toast } from './components/ui/use-toast';
 import { Toaster } from './components/ui/toaster';
-import { Dna, Github, ExternalLink, Atom } from 'lucide-react';
+import { Dna, Github, ExternalLink, Atom, RefreshCw, AlertTriangle } from 'lucide-react';
 
 function App() {
   const viewerRef = useRef<ViewerControls>(null);
@@ -24,6 +24,7 @@ function App() {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
   const [isLoadingStructure, setIsLoadingStructure] = useState(false);
+  const [structureError, setStructureError] = useState<string | null>(null);
 
   // Check for API key on mount
   useEffect(() => {
@@ -34,15 +35,28 @@ function App() {
 
   // Handle protein selection from samples
   const handleProteinSelect = useCallback(async (proteinId: string, file: string) => {
-    if (!viewerRef.current) return;
+    if (!viewerRef.current) {
+      toast({
+        title: "Error",
+        description: "3D viewer not ready. Please wait and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       setIsLoadingStructure(true);
+      setStructureError(null);
       setSelectedProtein(proteinId);
       setCurrentStructureName(proteinId);
       
       console.log(`🔄 Loading protein: ${proteinId} from file: ${file}`);
-      await viewerRef.current.loadStructure(`/data/${file}`);
+      
+      // Validate that the file URL is accessible
+      const fileUrl = `/data/${file}`;
+      console.log(`📁 Loading from: ${fileUrl}`);
+      
+      await viewerRef.current.loadStructure(fileUrl);
       
       setIsStructureLoaded(true);
       setCurrentSelection(null); // Clear selection when loading new structure
@@ -53,12 +67,26 @@ function App() {
       });
       
       console.log(`✅ Successfully loaded protein: ${proteinId}`);
+      
+      // Validate plugin state after loading
+      setTimeout(() => {
+        if (viewerRef.current?.validatePluginState()) {
+          console.log('✅ Plugin state validation passed');
+        } else {
+          console.log('⚠️ Plugin state validation failed');
+          setStructureError('Structure loaded but may not be visible. Try refreshing.');
+        }
+      }, 1000);
+      
     } catch (error) {
       console.error('❌ Failed to load protein:', error);
       setIsStructureLoaded(false);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setStructureError(errorMessage);
+      
       toast({
         title: "Error",
-        description: "Failed to load protein structure",
+        description: `Failed to load protein structure: ${errorMessage}`,
         variant: "destructive",
       });
     } finally {
@@ -68,10 +96,18 @@ function App() {
 
   // Handle custom file upload
   const handleFileLoad = useCallback(async (content: string, filename: string) => {
-    if (!viewerRef.current) return;
+    if (!viewerRef.current) {
+      toast({
+        title: "Error",
+        description: "3D viewer not ready. Please wait and try again.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       setIsLoadingStructure(true);
+      setStructureError(null);
       
       // Create a blob URL for the content
       const blob = new Blob([content], { type: 'text/plain' });
@@ -98,9 +134,12 @@ function App() {
     } catch (error) {
       console.error('❌ Failed to load file:', error);
       setIsStructureLoaded(false);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setStructureError(errorMessage);
+      
       toast({
         title: "Error",
-        description: "Failed to load uploaded file",
+        description: `Failed to load uploaded file: ${errorMessage}`,
         variant: "destructive",
       });
     } finally {
@@ -159,36 +198,69 @@ function App() {
     setViewerReady(true);
   }, []);
 
+  // Handle force refresh
+  const handleForceRefresh = useCallback(async () => {
+    if (!viewerRef.current) return;
+    
+    try {
+      await viewerRef.current.forceRerender();
+      toast({
+        title: "Viewer Refreshed",
+        description: "3D viewer has been refreshed",
+      });
+    } catch (error) {
+      console.error('Failed to refresh viewer:', error);
+    }
+  }, []);
+
   // Load default protein when viewer is ready
   useEffect(() => {
     const loadDefaultProtein = async () => {
       if (viewerReady && viewerRef.current && !isStructureLoaded && !isLoadingStructure) {
         console.log('🔄 Attempting to load default protein (2PGH)...');
         
-        try {
-          setIsLoadingStructure(true);
-          await viewerRef.current.loadStructure('/data/2PGH.pdb');
-          setIsStructureLoaded(true);
-          console.log('✅ Default protein (2PGH) loaded successfully');
+        // Add a longer delay to ensure Molstar is fully ready
+        setTimeout(async () => {
+          if (!viewerReady || isStructureLoaded || isLoadingStructure) return;
           
-          toast({
-            title: "Default Structure Loaded",
-            description: "Loaded 2PGH (Porcine Hemoglobin) as default",
-          });
-        } catch (error) {
-          console.error('❌ Failed to load default protein:', error);
-          setIsStructureLoaded(false);
-          // Don't show error toast for default loading failure - user can manually load
-        } finally {
-          setIsLoadingStructure(false);
-        }
+          try {
+            setIsLoadingStructure(true);
+            setStructureError(null);
+            
+            console.log('📁 Loading default protein from: /data/2PGH.pdb');
+            await viewerRef.current!.loadStructure('/data/2PGH.pdb');
+            
+            setIsStructureLoaded(true);
+            console.log('✅ Default protein (2PGH) loaded successfully');
+            
+            toast({
+              title: "Default Structure Loaded",
+              description: "Loaded 2PGH (Porcine Hemoglobin) as default",
+            });
+            
+            // Validate plugin state
+            setTimeout(() => {
+              if (viewerRef.current?.validatePluginState()) {
+                console.log('✅ Default protein validation passed');
+              } else {
+                console.log('⚠️ Default protein validation failed');
+                setStructureError('Default structure may not be visible. Try loading manually.');
+              }
+            }, 1000);
+            
+          } catch (error) {
+            console.error('❌ Failed to load default protein:', error);
+            setIsStructureLoaded(false);
+            // Don't show error toast for default loading failure - user can manually load
+            console.log('Default protein loading failed - user can load manually');
+          } finally {
+            setIsLoadingStructure(false);
+          }
+        }, 1000); // Increased delay
       }
     };
 
-    // Add small delay to ensure Molstar is fully initialized
-    const loadTimeout = setTimeout(loadDefaultProtein, 500);
-    
-    return () => clearTimeout(loadTimeout);
+    loadDefaultProtein();
   }, [viewerReady, isStructureLoaded, isLoadingStructure]);
 
   return (
@@ -247,6 +319,28 @@ function App() {
                     <div className="text-sm text-gray-400 capitalize">
                       {isLoadingStructure ? 'Please wait' : `${currentRepresentation} view`}
                     </div>
+                    
+                    {/* Structure error warning */}
+                    {structureError && (
+                      <div className="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/30 rounded">
+                        <div className="flex items-center space-x-2">
+                          <AlertTriangle className="h-4 w-4 text-yellow-400" />
+                          <div className="text-xs text-yellow-300">Structure Issue</div>
+                        </div>
+                        <div className="text-xs text-yellow-200 mt-1">{structureError}</div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleForceRefresh}
+                          className="mt-2 h-6 text-xs bg-yellow-500/20 border-yellow-500/30 text-yellow-300 hover:bg-yellow-500/30"
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Refresh
+                        </Button>
+                      </div>
+                    )}
+                    
+                    {/* Selection info */}
                     {currentSelection && !isLoadingStructure && (
                       <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded">
                         <div className="text-xs text-green-300 font-medium">Selected:</div>
@@ -335,6 +429,7 @@ function App() {
                   onError={(error) => {
                     console.error('❌ Molstar error:', error);
                     setIsStructureLoaded(false);
+                    setStructureError(error.message);
                     toast({
                       title: "Viewer Error",
                       description: error.message,
@@ -345,7 +440,7 @@ function App() {
                 />
                 
                 {/* Welcome message when no structure is loaded AND not loading */}
-                {!isStructureLoaded && !isLoadingStructure && viewerReady && (
+                {!isStructureLoaded && !isLoadingStructure && viewerReady && !structureError && (
                   <div className="absolute inset-4 flex items-center justify-center bg-gray-900/20 rounded-lg border-2 border-dashed border-gray-600">
                     <div className="text-center">
                       <Dna className="h-16 w-16 text-gray-500 mx-auto mb-4" />
