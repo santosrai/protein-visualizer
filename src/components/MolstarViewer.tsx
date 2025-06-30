@@ -10,6 +10,8 @@ import { PluginStateObject } from 'molstar/lib/mol-plugin-state/objects';
 import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
 import { StructureElement, StructureProperties } from 'molstar/lib/mol-model/structure';
+import { MolScriptBuilder as MS } from 'molstar/lib/mol-script/language/builder';
+import { StructureSelection, QueryContext } from 'molstar/lib/mol-model/structure/query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -499,6 +501,152 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
+    // Helper function to get the current structure
+    const getCurrentStructure = useCallback(() => {
+      if (!pluginRef.current) {
+        debugLog('Plugin not available for structure access', 'warning');
+        return null;
+      }
+
+      try {
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        if (structures.length === 0) {
+          debugLog('No structures found in plugin state', 'warning');
+          return null;
+        }
+        
+        return structures[0].obj?.data;
+      } catch (error) {
+        debugLog(`Error getting current structure: ${error}`, 'error');
+        return null;
+      }
+    }, [debugLog]);
+
+    // Implement selectResidue method
+    const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
+      debugLog(`Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
+      
+      if (!pluginRef.current) {
+        throw new Error('Plugin not initialized');
+      }
+
+      const structure = getCurrentStructure();
+      if (!structure) {
+        throw new Error('No structure loaded');
+      }
+
+      try {
+        // Build the selection query
+        let query;
+        if (chainId) {
+          // Select specific residue in specific chain
+          query = MS.struct.generator.atomGroups({
+            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_seq_id(), residueId]),
+            'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_asym_id(), chainId])
+          });
+        } else {
+          // Select residue in any chain
+          query = MS.struct.generator.atomGroups({
+            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_seq_id(), residueId])
+          });
+        }
+
+        // Execute the selection
+        const selection = StructureSelection.toLociWithSourceUnits(
+          StructureSelection.Singletons(structure, StructureSelection.query(query, structure))
+        );
+
+        // Apply the selection
+        await pluginRef.current.managers.structure.selection.fromLoci('add', selection);
+
+        // Focus on the selection
+        await PluginCommands.Camera.Focus(pluginRef.current, { 
+          loci: selection,
+          minRadius: 5,
+          extraRadius: 0
+        });
+
+        const message = `Selected residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`;
+        debugLog(message);
+        return message;
+        
+      } catch (error) {
+        const errorMessage = `Failed to select residue: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        debugLog(errorMessage, 'error');
+        throw new Error(errorMessage);
+      }
+    }, [debugLog, getCurrentStructure]);
+
+    // Implement selectResidueRange method
+    const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
+      debugLog(`Selecting residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`);
+      
+      if (!pluginRef.current) {
+        throw new Error('Plugin not initialized');
+      }
+
+      const structure = getCurrentStructure();
+      if (!structure) {
+        throw new Error('No structure loaded');
+      }
+
+      try {
+        // Build the selection query for residue range
+        const rangeQuery = MS.struct.generator.atomGroups({
+          'residue-test': MS.core.rel.and([
+            MS.core.rel.gr([MS.struct.atomProperty.macromolecular.label_seq_id(), query.startResidue - 1]),
+            MS.core.rel.le([MS.struct.atomProperty.macromolecular.label_seq_id(), query.endResidue])
+          ]),
+          'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_asym_id(), query.chainId])
+        });
+
+        // Execute the selection
+        const selection = StructureSelection.toLociWithSourceUnits(
+          StructureSelection.Singletons(structure, StructureSelection.query(rangeQuery, structure))
+        );
+
+        // Apply the selection
+        await pluginRef.current.managers.structure.selection.fromLoci('add', selection);
+
+        // Focus on the selection
+        await PluginCommands.Camera.Focus(pluginRef.current, { 
+          loci: selection,
+          minRadius: 10,
+          extraRadius: 5
+        });
+
+        const message = `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`;
+        debugLog(message);
+        return message;
+        
+      } catch (error) {
+        const errorMessage = `Failed to select residue range: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        debugLog(errorMessage, 'error');
+        throw new Error(errorMessage);
+      }
+    }, [debugLog, getCurrentStructure]);
+
+    // Implement clearSelection method
+    const clearSelection = useCallback(async (): Promise<void> => {
+      debugLog('Clearing all selections');
+      
+      if (!pluginRef.current) {
+        throw new Error('Plugin not initialized');
+      }
+
+      try {
+        // Clear all selections using the plugin's selection manager
+        await pluginRef.current.managers.structure.selection.clear();
+        
+        debugLog('All selections cleared successfully');
+        
+      } catch (error) {
+        const errorMessage = `Failed to clear selections: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        debugLog(errorMessage, 'error');
+        throw new Error(errorMessage);
+      }
+    }, [debugLog]);
+
     // Structure loading
     const loadStructure = useCallback(async (url: string, format: string = 'pdb') => {
       debugLog(`🔄 Starting structure load: ${url}`);
@@ -661,9 +809,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const clearHighlights = useCallback(async () => { throw new Error('Not implemented'); }, []);
     const getStructureInfo = useCallback(async (): Promise<string> => { return 'Not implemented'; }, []);
     const getCurrentSelection = useCallback(() => currentSelection, [currentSelection]);
-    const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => { throw new Error('Not implemented'); }, []);
-    const clearSelection = useCallback(async (): Promise<void> => { throw new Error('Not implemented'); }, []);
-    const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => { throw new Error('Not implemented'); }, []);
     const getPlugin = useCallback(() => pluginRef.current, []);
 
     // Expose methods through ref
