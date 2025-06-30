@@ -277,6 +277,99 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       };
     }, [extractSelectionInfo, updateSelectionState]);
 
+    // ENHANCED: Fixed manual extraction for programmatic selections
+    const extractSelectionFromLoci = useCallback((loci: any): SelectionInfo | null => {
+      try {
+        console.log('🔍 Extracting selection from loci:', loci);
+        console.log('📊 Loci structure details:', {
+          hasElements: !!loci.elements,
+          elementsCount: loci.elements?.length,
+          hasStructure: !!loci.structure,
+          hasUnits: !!loci.structure?.units
+        });
+
+        if (!loci.elements || loci.elements.length === 0) {
+          console.log('❌ No elements in loci');
+          return null;
+        }
+
+        const element = loci.elements[0];
+        console.log('📊 Element details:', {
+          unit: element.unit,
+          hasIndices: !!element.indices,
+          indicesLength: element.indices?.length,
+          indicesType: typeof element.indices,
+          element: element
+        });
+
+        // Check if element has indices in different possible formats
+        let atomIndices;
+        if (element.indices && element.indices.length > 0) {
+          atomIndices = element.indices;
+        } else if (element.indices && typeof element.indices === 'object') {
+          // Sometimes indices might be in a different format
+          atomIndices = Array.from(element.indices);
+        } else {
+          console.log('❌ No valid indices found in element');
+          return null;
+        }
+
+        const structure = loci.structure;
+        const unit = structure.units[element.unit];
+
+        if (!unit) {
+          console.log('❌ No unit found for element.unit:', element.unit);
+          return null;
+        }
+
+        console.log('📊 Unit details:', {
+          hasElements: !!unit.elements,
+          elementsLength: unit.elements?.length,
+          unitKind: unit.kind
+        });
+
+        // Get the first atom index
+        const atomIndex = atomIndices[0];
+        console.log('🎯 Using atomIndex:', atomIndex);
+
+        // Different approaches to get element index
+        let elementIndex;
+        
+        if (unit.elements && atomIndex < unit.elements.length) {
+          elementIndex = unit.elements[atomIndex];
+        } else {
+          // Sometimes atomIndex is already the elementIndex
+          elementIndex = atomIndex;
+        }
+
+        console.log('🎯 Using elementIndex:', elementIndex);
+
+        // Create location
+        const location = StructureElement.Location.create(structure, unit, elementIndex);
+        console.log('🎯 Created location:', location);
+
+        // Extract properties
+        const selectionInfo = extractSelectionInfo(location);
+        if (selectionInfo) {
+          // Calculate total atom count
+          const totalAtoms = loci.elements.reduce((acc: number, el: any) => {
+            const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
+            return acc + indicesCount;
+          }, 0);
+          selectionInfo.atomCount = totalAtoms;
+          
+          console.log('✅ Successfully extracted selection info:', selectionInfo);
+          return selectionInfo;
+        }
+
+        return null;
+
+      } catch (error) {
+        console.error('❌ Error in extractSelectionFromLoci:', error);
+        return null;
+      }
+    }, [extractSelectionInfo]);
+
     // ENHANCED: Direct implementation following your working code exactly
     const selectResidue = useCallback(async (selectedResidue: number, chainId?: string): Promise<string> => {
       console.log(`🎯 selectResidue called with residue: ${selectedResidue}, chain: ${chainId}`);
@@ -343,47 +436,35 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
         console.log('✅ Highlight applied via lociHighlights');
 
-        // ENHANCED: Extract selection info manually for programmatic selections
+        // ENHANCED: Extract selection info manually using the improved method
         console.log('🔍 Manually extracting selection info for programmatic selection...');
         
-        try {
-          const element = loci.elements[0];
-          const structure = loci.structure;
-          const unit = structure.units[element.unit];
+        const selectionInfo = extractSelectionFromLoci(loci);
+        if (selectionInfo) {
+          console.log('✅ Programmatic selection info extracted successfully:', selectionInfo);
+          updateSelectionState(selectionInfo);
+        } else {
+          console.log('❌ Failed to extract selection info - but selection still worked');
           
-          console.log('📊 Loci structure:', {
-            elementsCount: loci.elements.length,
-            unitIndex: element.unit,
-            indicesCount: element.indices.length
-          });
+          // Create a basic selection info as fallback
+          const fallbackInfo: SelectionInfo = {
+            residueNumber: selectedResidue,
+            chainId: chainId,
+            description: `Residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} (selected programmatically)`,
+            atomCount: loci.elements.reduce((acc: number, el: any) => {
+              const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
+              return acc + indicesCount;
+            }, 0)
+          };
           
-          if (unit && element.indices && element.indices.length > 0) {
-            const atomIndex = element.indices[0];
-            const elementIndex = unit.elements[atomIndex];
-            
-            console.log('🎯 Creating location for element:', { atomIndex, elementIndex });
-            
-            const location = StructureElement.Location.create(structure, unit, elementIndex);
-            const selectionInfo = extractSelectionInfo(location);
-            
-            if (selectionInfo) {
-              // Calculate total atom count for the entire selection
-              const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
-              selectionInfo.atomCount = totalAtoms;
-              
-              console.log('✅ Programmatic selection info extracted successfully:', selectionInfo);
-              updateSelectionState(selectionInfo);
-            } else {
-              console.log('❌ Failed to extract selection info');
-            }
-          } else {
-            console.log('❌ Invalid unit or indices for selection extraction');
-          }
-        } catch (extractError) {
-          console.error('❌ Error extracting selection info for programmatic selection:', extractError);
+          console.log('🔄 Using fallback selection info:', fallbackInfo);
+          updateSelectionState(fallbackInfo);
         }
 
-        const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+        const totalAtoms = loci.elements.reduce((acc: number, el: any) => {
+          const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
+          return acc + indicesCount;
+        }, 0);
         return `✅ Selected residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} (${totalAtoms} atoms)`;
 
       } catch (error) {
@@ -391,7 +472,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         throw new Error(`Failed to select residue ${selectedResidue}: ${errorMessage}`);
       }
-    }, [extractSelectionInfo, updateSelectionState]);
+    }, [extractSelectionFromLoci, updateSelectionState]);
 
     // Simplified residue range selection
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
@@ -430,7 +511,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         (window as any).molstar?.managers.interactivity.lociSelects.selectOnly({ loci });
         (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
 
-        const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+        const totalAtoms = loci.elements.reduce((acc: number, el: any) => {
+          const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
+          return acc + indicesCount;
+        }, 0);
         const estimatedResidues = Math.ceil(totalAtoms / 10);
 
         const selectionInfo: SelectionInfo = {
