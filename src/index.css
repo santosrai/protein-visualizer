@@ -185,31 +185,80 @@ img {
   object-position: top;
 }
 
-/* CRITICAL FIX: Grid layout constraints */
+/* CRITICAL FIX: Grid layout constraints with SCROLLABLE LEFT PANEL */
 .grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 1.5rem;
   width: 100%;
-  overflow: hidden;
+  /* REMOVED overflow: hidden to allow scrolling */
+  height: 100%;
 }
 
+/* LEFT PANEL - SCROLLABLE */
 .lg\:col-span-3 {
   grid-column: span 3 / span 3;
   min-width: 0;
-  overflow: hidden;
+  /* CRITICAL: Allow scrolling in left panel */
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 100%;
+  /* Ensure proper scrollable area */
+  display: flex;
+  flex-direction: column;
 }
 
+/* MIDDLE PANEL - VIEWER */
 .lg\:col-span-6 {
   grid-column: span 6 / span 6;
   min-width: 0;
+  /* Viewer should not scroll, only contain */
   overflow: hidden;
+  max-height: 100%;
+}
+
+/* RIGHT PANEL - CHAT */
+.lg\:col-span-3:last-child {
+  grid-column: span 3 / span 3;
+  min-width: 0;
+  overflow: hidden;
+  max-height: 100%;
 }
 
 /* Ensure proper layout containment */
 .container {
   max-width: 100%;
   overflow-x: hidden;
+  height: 100vh;
+}
+
+/* Enhanced scrollable area for left panel content */
+.scrollable-controls {
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: calc(100vh - 200px);
+  padding-right: 4px;
+  /* Custom scrollbar for better UX */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.3) rgba(255, 255, 255, 0.1);
+}
+
+.scrollable-controls::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollable-controls::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.scrollable-controls::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+}
+
+.scrollable-controls::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
 }
 
 /* Fix for potential z-index issues */
