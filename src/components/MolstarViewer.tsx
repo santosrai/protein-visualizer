@@ -10,11 +10,9 @@ import { PluginStateObject } from 'molstar/lib/mol-plugin-state/objects';
 import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
 import { StructureElement, StructureProperties } from 'molstar/lib/mol-model/structure';
-import { Script } from 'molstar/lib/mol-script/script';
-import { StructureSelection } from 'molstar/lib/mol-model/structure/query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut, AlertTriangle } from 'lucide-react';
+import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut, AlertTriangle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Import required molstar styles
@@ -71,45 +69,304 @@ export interface ViewerControls {
   validatePluginState: () => boolean;
 }
 
-// Add a global registry to track active Molstar instances
-const MOLSTAR_INSTANCES = new Set<string>();
+// Global instance tracking to prevent conflicts
+const ACTIVE_INSTANCES = new Map<string, PluginContext>();
+let globalInitializationLock = false;
 
 const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
   ({ className, onReady, onError, onSelectionChange }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const pluginRef = useRef<PluginContext | null>(null);
+    const instanceIdRef = useRef<string>(`molstar-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+    const initializationAttempts = useRef<number>(0);
+    const maxInitializationAttempts = 3;
+    
+    // State management
     const [isLoading, setIsLoading] = useState(false);
     const [isInitialized, setIsInitialized] = useState(false);
     const [hasStructure, setHasStructure] = useState(false);
+    const [initializationError, setInitializationError] = useState<string | null>(null);
     const [structureLoadError, setStructureLoadError] = useState<string | null>(null);
-    const [debugInfo, setDebugInfo] = useState<string>('');
     const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
+    
+    // Refs for cleanup and state tracking
+    const mountedRef = useRef<boolean>(true);
     const waterRepresentationRef = useRef<string | null>(null);
     const selectionSubscriptionRef = useRef<any>(null);
-    const originalRepresentationsRef = useRef<string[]>([]);
-    const selectionOnlyModeRef = useRef<boolean>(false);
-    
-    // Enhanced state management
-    const mountedRef = useRef<boolean>(true);
-    const initializingRef = useRef<boolean>(false);
-    const instanceIdRef = useRef<string>(`molstar-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
     const disposalTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const renderTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // Debug logging function
+    // Enhanced debug logging with initialization tracking
     const debugLog = useCallback((message: string, type: 'info' | 'warning' | 'error' = 'info') => {
       const timestamp = new Date().toISOString().substr(11, 12);
-      const logMessage = `[${timestamp}] ${message}`;
-      console.log(`🔬 ${logMessage}`);
+      const instanceId = instanceIdRef.current.substr(-6);
+      const logMessage = `[${timestamp}][${instanceId}] ${message}`;
       
-      if (type === 'error') {
-        setDebugInfo(prev => `${prev}\n❌ ${logMessage}`);
-      } else if (type === 'warning') {
-        setDebugInfo(prev => `${prev}\n⚠️ ${logMessage}`);
-      } else {
-        setDebugInfo(prev => `${prev}\n✅ ${logMessage}`);
-      }
+      const emoji = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : '✅';
+      console.log(`${emoji} ${logMessage}`);
     }, []);
+
+    // CRITICAL FIX: Wait for DOM to be completely ready
+    const waitForDOMReady = useCallback((): Promise<void> => {
+      return new Promise((resolve) => {
+        if (document.readyState === 'complete') {
+          resolve();
+          return;
+        }
+        
+        const checkReady = () => {
+          if (document.readyState === 'complete') {
+            resolve();
+          } else {
+            setTimeout(checkReady, 10);
+          }
+        };
+        
+        checkReady();
+      });
+    }, []);
+
+    // CRITICAL FIX: Ensure container is completely clean before initialization
+    const prepareContainer = useCallback(async (): Promise<boolean> => {
+      if (!containerRef.current || !mountedRef.current) {
+        debugLog('Container not available or component unmounted', 'warning');
+        return false;
+      }
+
+      try {
+        debugLog('Preparing container for initialization');
+        
+        // Force complete cleanup of container
+        const container = containerRef.current;
+        
+        // Remove all children with multiple methods
+        while (container.firstChild) {
+          container.removeChild(container.firstChild);
+        }
+        container.innerHTML = '';
+        
+        // Remove any molstar-specific attributes
+        Array.from(container.attributes).forEach(attr => {
+          if (attr.name.startsWith('data-molstar') || 
+              attr.name.startsWith('data-plugin') ||
+              attr.name.startsWith('data-react')) {
+            container.removeAttribute(attr.name);
+          }
+        });
+        
+        // Reset container styles to ensure proper rendering
+        container.style.cssText = '';
+        container.className = 'w-full h-full rounded-lg overflow-hidden bg-gray-900 border border-gray-700';
+        
+        // Ensure container has proper dimensions
+        const rect = container.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
+          debugLog(`Container has zero dimensions: ${rect.width}x${rect.height}`, 'warning');
+          // Force dimensions
+          container.style.width = '100%';
+          container.style.height = '100%';
+          container.style.minHeight = '400px';
+          
+          // Wait for layout
+          await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+        
+        debugLog(`Container prepared - Dimensions: ${rect.width}x${rect.height}`);
+        return true;
+        
+      } catch (error) {
+        debugLog(`Error preparing container: ${error}`, 'error');
+        return false;
+      }
+    }, [debugLog]);
+
+    // CRITICAL FIX: Enhanced plugin initialization with proper error handling
+    const initializePlugin = useCallback(async (isRetry: boolean = false): Promise<void> => {
+      const instanceId = instanceIdRef.current;
+      
+      // Prevent multiple concurrent initializations
+      if (globalInitializationLock && !isRetry) {
+        debugLog('Initialization already in progress globally, waiting...', 'warning');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (!mountedRef.current) return;
+      }
+
+      // Check if already initialized
+      if (pluginRef.current && isInitialized) {
+        debugLog('Plugin already initialized', 'warning');
+        return;
+      }
+
+      // Check mount status
+      if (!mountedRef.current) {
+        debugLog('Component unmounted during initialization attempt', 'warning');
+        return;
+      }
+
+      // Check retry attempts
+      if (initializationAttempts.current >= maxInitializationAttempts) {
+        const error = `Failed to initialize Molstar after ${maxInitializationAttempts} attempts`;
+        debugLog(error, 'error');
+        setInitializationError(error);
+        onError?.(new Error(error));
+        return;
+      }
+
+      try {
+        debugLog(`🚀 Starting plugin initialization (attempt ${initializationAttempts.current + 1}/${maxInitializationAttempts})`);
+        initializationAttempts.current++;
+        
+        globalInitializationLock = true;
+        setIsLoading(true);
+        setInitializationError(null);
+
+        // Wait for DOM to be completely ready
+        await waitForDOMReady();
+        
+        if (!mountedRef.current) {
+          debugLog('Component unmounted during DOM wait', 'warning');
+          return;
+        }
+
+        // Prepare container
+        const containerReady = await prepareContainer();
+        if (!containerReady) {
+          throw new Error('Container preparation failed');
+        }
+
+        // Additional wait to ensure container is stable
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        if (!mountedRef.current) {
+          debugLog('Component unmounted during container preparation', 'warning');
+          return;
+        }
+
+        // Check for existing instance and clean up
+        if (ACTIVE_INSTANCES.has(instanceId)) {
+          debugLog('Cleaning up existing instance', 'warning');
+          const existingPlugin = ACTIVE_INSTANCES.get(instanceId);
+          try {
+            existingPlugin?.dispose();
+          } catch (e) {
+            debugLog(`Warning during existing plugin disposal: ${e}`, 'warning');
+          }
+          ACTIVE_INSTANCES.delete(instanceId);
+        }
+
+        // Create plugin specification
+        const spec = DefaultPluginUISpec();
+        spec.layout = {
+          initial: {
+            isExpanded: false,
+            showControls: false,
+            regionState: {
+              bottom: 'hidden',
+              left: 'hidden',
+              right: 'hidden',
+              top: 'hidden',
+            }
+          }
+        };
+        spec.config = [
+          [PluginConfig.Viewport.ShowExpand, false],
+          [PluginConfig.Viewport.ShowControls, false],
+          [PluginConfig.Viewport.ShowSettings, false],
+          [PluginConfig.Viewport.ShowSelectionMode, false],
+          [PluginConfig.Viewport.ShowAnimation, false]
+        ];
+
+        debugLog('Creating Molstar plugin with prepared container');
+        
+        // CRITICAL: Use a timeout to catch initialization hangs
+        const initPromise = createPluginUI({
+          target: containerRef.current!,
+          render: renderReact18,
+          spec
+        });
+
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Plugin initialization timeout (10s)')), 10000);
+        });
+
+        const plugin = await Promise.race([initPromise, timeoutPromise]);
+
+        // Final mount check after async operation
+        if (!mountedRef.current) {
+          debugLog('Component unmounted during plugin creation - cleaning up', 'warning');
+          try {
+            plugin.dispose();
+          } catch (e) {
+            debugLog('Error disposing plugin during unmount cleanup', 'warning');
+          }
+          return;
+        }
+
+        // Store plugin references
+        pluginRef.current = plugin;
+        ACTIVE_INSTANCES.set(instanceId, plugin);
+
+        // Set up selection monitoring
+        setupSelectionMonitoring(plugin);
+
+        // Validate plugin state
+        const isValid = validatePluginState();
+        if (!isValid) {
+          throw new Error('Plugin state validation failed after initialization');
+        }
+
+        setIsInitialized(true);
+        setInitializationError(null);
+        initializationAttempts.current = 0; // Reset on success
+        
+        debugLog('✅ Plugin initialization completed successfully');
+        onReady?.(plugin);
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown initialization error';
+        debugLog(`❌ Plugin initialization failed: ${errorMessage}`, 'error');
+        
+        setInitializationError(errorMessage);
+        setIsInitialized(false);
+        
+        // Clean up failed initialization
+        if (pluginRef.current) {
+          try {
+            pluginRef.current.dispose();
+          } catch (e) {
+            debugLog('Error disposing failed plugin', 'warning');
+          }
+          pluginRef.current = null;
+        }
+        
+        ACTIVE_INSTANCES.delete(instanceId);
+        
+        // Retry after a delay if we haven't exceeded max attempts
+        if (initializationAttempts.current < maxInitializationAttempts && mountedRef.current) {
+          debugLog(`Retrying initialization in 1 second (attempt ${initializationAttempts.current + 1}/${maxInitializationAttempts})`);
+          initTimeoutRef.current = setTimeout(() => {
+            if (mountedRef.current) {
+              initializePlugin(true);
+            }
+          }, 1000);
+        } else {
+          onError?.(error as Error);
+        }
+        
+      } finally {
+        globalInitializationLock = false;
+        setIsLoading(false);
+      }
+    }, [waitForDOMReady, prepareContainer, debugLog, onReady, onError]);
+
+    // Manual retry function
+    const retryInitialization = useCallback(() => {
+      debugLog('Manual retry requested - resetting attempts counter');
+      initializationAttempts.current = 0;
+      setInitializationError(null);
+      setIsInitialized(false);
+      initializePlugin(true);
+    }, [initializePlugin, debugLog]);
 
     // Validate plugin and canvas state
     const validatePluginState = useCallback((): boolean => {
@@ -145,191 +402,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return true;
     }, [debugLog]);
 
-    // Force rerender of the plugin
-    const forceRerender = useCallback(async (): Promise<void> => {
-      if (!pluginRef.current) return;
-
-      try {
-        debugLog('Forcing plugin rerender');
-        
-        // Trigger a resize event to force canvas redraw
-        await PluginCommands.Camera.Reset(pluginRef.current);
-        
-        // Force canvas resize
-        if (containerRef.current) {
-          const resizeEvent = new Event('resize');
-          window.dispatchEvent(resizeEvent);
-        }
-
-        debugLog('Plugin rerender completed');
-      } catch (error) {
-        debugLog(`Rerender failed: ${error}`, 'error');
-      }
-    }, [debugLog]);
-
-    // Create the plugin specification with minimal UI
-    const createSpec = useCallback(() => {
-      const spec = DefaultPluginUISpec();
-      spec.layout = {
-        initial: {
-          isExpanded: false,
-          showControls: false,
-          regionState: {
-            bottom: 'hidden',
-            left: 'hidden',
-            right: 'hidden',
-            top: 'hidden',
-          }
-        }
-      };
-      spec.config = [
-        [PluginConfig.Viewport.ShowExpand, false],
-        [PluginConfig.Viewport.ShowControls, false],
-        [PluginConfig.Viewport.ShowSettings, false],
-        [PluginConfig.Viewport.ShowSelectionMode, false],
-        [PluginConfig.Viewport.ShowAnimation, false]
-      ];
-      return spec;
-    }, []);
-
-    // Extract selection information with comprehensive error handling
-    const extractSelectionInfo = useCallback((location: StructureElement.Location): SelectionInfo | null => {
-      try {
-        debugLog('Extracting selection info from location');
-        
-        if (!location || !location.unit || !location.structure) {
-          debugLog('Invalid location structure', 'warning');
-          return null;
-        }
-        
-        const residueName = StructureProperties.residue.label_comp_id(location);
-        const residueNumber = StructureProperties.residue.label_seq_id(location);
-        const chainId = StructureProperties.chain.label_asym_id(location);
-        const atomName = StructureProperties.atom.label_atom_id(location);
-        const elementType = StructureProperties.atom.type_symbol(location);
-
-        debugLog(`Extracted properties: ${residueName} ${residueNumber} (Chain ${chainId})`);
-
-        let coordinates;
-        try {
-          const unit = location.unit;
-          const elementIndex = location.element;
-          if (unit && unit.conformation && typeof elementIndex !== 'undefined') {
-            const pos = unit.conformation.position(elementIndex, Vec3());
-            coordinates = { x: pos[0], y: pos[1], z: pos[2] };
-            debugLog(`Coordinates: (${coordinates.x.toFixed(2)}, ${coordinates.y.toFixed(2)}, ${coordinates.z.toFixed(2)})`);
-          }
-        } catch (e) {
-          debugLog('Coordinates not available for selection', 'warning');
-        }
-
-        const description = `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`;
-
-        const selectionInfo: SelectionInfo = {
-          residueName,
-          residueNumber,
-          chainId,
-          atomName,
-          elementType,
-          coordinates,
-          atomCount: 1, // Will be updated later for multi-atom selections
-          description
-        };
-
-        debugLog(`Successfully extracted selection info: ${description}`);
-        return selectionInfo;
-
-      } catch (error) {
-        debugLog(`Error extracting selection info: ${error}`, 'error');
-        return null;
-      }
-    }, [debugLog]);
-
-    // Helper function to update selection state with mount checking
-    const updateSelectionState = useCallback((selectionInfo: SelectionInfo | null) => {
-      if (!mountedRef.current) {
-        debugLog('Component unmounted - skipping selection update', 'warning');
-        return;
-      }
-      
-      debugLog('Updating selection state');
-      setCurrentSelection(selectionInfo);
-      onSelectionChange?.(selectionInfo);
-      
-      if (selectionInfo) {
-        debugLog(`Selection state updated: ${selectionInfo.description}`);
-      } else {
-        debugLog('Selection state cleared');
-      }
-    }, [onSelectionChange, debugLog]);
-
-    // Safe interaction event processing
-    const processInteractionEvent = useCallback((eventData: any) => {
-      if (!mountedRef.current) return;
-      
-      try {
-        debugLog('Processing interaction event');
-        
-        // Safely check for loci in the event data
-        let loci = null;
-        
-        if (eventData && eventData.current && eventData.current.loci) {
-          loci = eventData.current.loci;
-        } else if (eventData && eventData.loci) {
-          loci = eventData.loci;
-        } else {
-          debugLog('No loci found in interaction event', 'warning');
-          return;
-        }
-        
-        if (!loci || !StructureElement.Loci.is(loci)) {
-          debugLog('Invalid loci structure', 'warning');
-          return;
-        }
-        
-        if (loci.elements && loci.elements.length > 0) {
-          const element = loci.elements[0];
-          const structure = loci.structure;
-          
-          if (!structure || !structure.units || !structure.units[element.unit]) {
-            debugLog('Invalid structure or unit', 'warning');
-            return;
-          }
-          
-          const unit = structure.units[element.unit];
-          
-          if (!element.indices || element.indices.length === 0) {
-            debugLog('No indices in element', 'warning');
-            return;
-          }
-          
-          const atomIndex = element.indices[0];
-          const elementIndex = unit.elements[atomIndex];
-          
-          if (typeof elementIndex === 'undefined') {
-            debugLog('Invalid element index', 'warning');
-            return;
-          }
-          
-          const location = StructureElement.Location.create(structure, unit, elementIndex);
-          
-          const selectionInfo = extractSelectionInfo(location);
-          if (selectionInfo) {
-            const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + (el.indices?.length || 0), 0);
-            selectionInfo.atomCount = totalAtoms;
-            
-            debugLog(`Selection processed from interaction: ${selectionInfo.description}`);
-            updateSelectionState(selectionInfo);
-          }
-        }
-      } catch (error) {
-        debugLog(`Error processing interaction event: ${error}`, 'error');
-      }
-    }, [extractSelectionInfo, updateSelectionState, debugLog]);
-
-    // Robust selection monitoring setup
+    // Enhanced selection monitoring
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
-      debugLog('Setting up enhanced selection monitoring');
+      debugLog('Setting up selection monitoring');
       
       // Clean up previous subscriptions
       if (selectionSubscriptionRef.current) {
@@ -342,78 +417,94 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // Method 1: Listen to structure selection manager changes
+        // Subscribe to selection changes
         const selectionSubscription = plugin.managers.structure.selection.events.changed.subscribe(() => {
           if (!mountedRef.current) return;
           
-          debugLog('Structure selection manager event fired');
-          
           try {
             const manager = plugin.managers.structure.selection;
-            
             if (manager.entries && manager.entries.length > 0) {
               const entry = manager.entries[0];
               if (entry && entry.selection && StructureElement.Loci.is(entry.selection)) {
-                processInteractionEvent({ loci: entry.selection });
+                // Process selection info
+                const selectionInfo = extractSelectionInfo(entry.selection, entry.structure);
+                setCurrentSelection(selectionInfo);
+                onSelectionChange?.(selectionInfo);
               }
             } else {
-              debugLog('Selection cleared via selection manager');
-              updateSelectionState(null);
+              setCurrentSelection(null);
+              onSelectionChange?.(null);
             }
           } catch (error) {
-            debugLog(`Error processing selection manager event: ${error}`, 'error');
+            debugLog(`Error processing selection: ${error}`, 'error');
           }
         });
 
-        // Method 2: Listen to click interactions as backup
-        const clickSubscription = plugin.behaviors.interaction.click.subscribe((event) => {
-          if (!mountedRef.current) return;
-          
-          debugLog('Click interaction event fired');
-          
-          // Delay processing to allow selection to be processed
-          setTimeout(() => {
-            if (!mountedRef.current) return;
-            
-            try {
-              const currentHighlights = plugin.managers.interactivity.lociHighlights.current;
-              if (currentHighlights && currentHighlights.loci) {
-                processInteractionEvent({ loci: currentHighlights.loci });
-              }
-            } catch (error) {
-              debugLog(`Error processing click interaction: ${error}`, 'error');
-            }
-          }, 100);
-        });
-
-        // Store subscriptions for cleanup
         selectionSubscriptionRef.current = {
           unsubscribe: () => {
             try {
               selectionSubscription.unsubscribe();
-              clickSubscription.unsubscribe();
             } catch (error) {
-              debugLog(`Error unsubscribing from events: ${error}`, 'error');
+              debugLog(`Error unsubscribing: ${error}`, 'error');
             }
           }
         };
 
-        debugLog('Enhanced selection monitoring setup complete');
+        debugLog('Selection monitoring setup complete');
         
       } catch (error) {
         debugLog(`Error setting up selection monitoring: ${error}`, 'error');
       }
-    }, [processInteractionEvent, updateSelectionState, debugLog]);
+    }, [onSelectionChange, debugLog]);
 
-    // Enhanced structure loading with detailed debugging
+    // Extract selection information from loci
+    const extractSelectionInfo = useCallback((loci: any, structure: any): SelectionInfo | null => {
+      try {
+        if (!loci.elements || loci.elements.length === 0) return null;
+        
+        const element = loci.elements[0];
+        const unit = structure.units[element.unit];
+        const atomIndex = element.indices[0];
+        const elementIndex = unit.elements[atomIndex];
+        
+        const location = StructureElement.Location.create(structure, unit, elementIndex);
+        
+        const residueName = StructureProperties.residue.label_comp_id(location);
+        const residueNumber = StructureProperties.residue.label_seq_id(location);
+        const chainId = StructureProperties.chain.label_asym_id(location);
+        const atomName = StructureProperties.atom.label_atom_id(location);
+        const elementType = StructureProperties.atom.type_symbol(location);
+        
+        let coordinates;
+        try {
+          const pos = unit.conformation.position(elementIndex, Vec3());
+          coordinates = { x: pos[0], y: pos[1], z: pos[2] };
+        } catch (e) {
+          // Coordinates not available
+        }
+        
+        return {
+          residueName,
+          residueNumber,
+          chainId,
+          atomName,
+          elementType,
+          coordinates,
+          atomCount: loci.elements.reduce((acc: number, el: any) => acc + (el.indices?.length || 0), 0),
+          description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
+        };
+      } catch (error) {
+        debugLog(`Error extracting selection info: ${error}`, 'error');
+        return null;
+      }
+    }, [debugLog]);
+
+    // Structure loading
     const loadStructure = useCallback(async (url: string, format: string = 'pdb') => {
-      debugLog(`🔄 Starting structure load: ${url} (format: ${format})`);
+      debugLog(`🔄 Starting structure load: ${url}`);
       
-      if (!pluginRef.current || !mountedRef.current) {
-        const error = 'Plugin not available or component unmounted';
-        debugLog(error, 'error');
-        setStructureLoadError(error);
-        return;
+      if (!pluginRef.current || !isInitialized) {
+        throw new Error('Plugin not initialized. Cannot load structure.');
       }
 
       try {
@@ -421,357 +512,63 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         setStructureLoadError(null);
         setHasStructure(false);
         
-        debugLog('Clearing existing structures');
+        // Clear existing structures
+        await PluginCommands.State.RemoveObject(pluginRef.current, { 
+          state: pluginRef.current.state.data, 
+          ref: pluginRef.current.state.data.tree.root.ref
+        });
         
-        // Clear existing structures and reset selection
-        try {
-          await PluginCommands.State.RemoveObject(pluginRef.current, { 
-            state: pluginRef.current.state.data, 
-            ref: pluginRef.current.state.data.tree.root.ref
-          });
-          debugLog('Existing structures cleared');
-        } catch (error) {
-          debugLog(`Warning during structure clear: ${error}`, 'warning');
-        }
-        
-        waterRepresentationRef.current = null;
-        updateSelectionState(null);
-        selectionOnlyModeRef.current = false;
-        originalRepresentationsRef.current = [];
-
-        debugLog('Downloading structure data');
-        
-        // Download and load the structure with enhanced error handling
-        const data = await pluginRef.current.builders.data.download(
-          { url: Asset.Url(url) }, 
-          { state: { isGhost: false } }
-        );
-        
-        if (!data || !data.obj) {
-          throw new Error('Failed to download structure data');
-        }
-        
-        debugLog('Structure data downloaded successfully');
-        
-        debugLog('Parsing trajectory');
+        // Load structure
+        const data = await pluginRef.current.builders.data.download({ url: Asset.Url(url) }, { state: { isGhost: false } });
         const trajectory = await pluginRef.current.builders.structure.parseTrajectory(data, format as any);
-        
-        if (!trajectory || !trajectory.obj) {
-          throw new Error('Failed to parse trajectory');
-        }
-        
-        debugLog('Trajectory parsed successfully');
-        
-        debugLog('Creating model');
         const model = await pluginRef.current.builders.structure.createModel(trajectory);
-        
-        if (!model || !model.obj) {
-          throw new Error('Failed to create model');
-        }
-        
-        debugLog('Model created successfully');
-        
-        debugLog('Creating structure');
         const structure = await pluginRef.current.builders.structure.createStructure(model);
         
-        if (!structure || !structure.obj) {
-          throw new Error('Failed to create structure');
-        }
-        
-        debugLog('Structure created successfully');
-        
-        debugLog('Adding cartoon representation');
-        
-        // Create default representation with enhanced validation
-        const representation = await pluginRef.current.builders.structure.representation.addRepresentation(structure, {
+        // Create representation
+        await pluginRef.current.builders.structure.representation.addRepresentation(structure, {
           type: 'cartoon',
           color: 'chain-id'
         });
-        
-        if (!representation) {
-          throw new Error('Failed to create representation');
-        }
-        
-        debugLog('Cartoon representation added successfully');
 
-        // Focus the camera on the structure
-        debugLog('Resetting camera');
+        // Reset camera
         await PluginCommands.Camera.Reset(pluginRef.current);
         
-        // Force a rerender to ensure visibility
-        debugLog('Forcing rerender');
-        setTimeout(() => {
-          forceRerender();
-        }, 100);
-        
         setHasStructure(true);
-        debugLog('✅ Structure loaded successfully and should be visible');
-        
-        // Validate that we can see the structure
-        setTimeout(() => {
-          const isValid = validatePluginState();
-          if (!isValid) {
-            debugLog('Plugin state validation failed after loading', 'warning');
-          }
-        }, 500);
+        debugLog('✅ Structure loaded successfully');
         
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         debugLog(`❌ Failed to load structure: ${errorMessage}`, 'error');
         setStructureLoadError(errorMessage);
-        setHasStructure(false);
-        onError?.(error as Error);
-      } finally {
-        setIsLoading(false);
-      }
-    }, [onError, updateSelectionState, debugLog, forceRerender, validatePluginState]);
-
-    // Comprehensive cleanup function
-    const cleanupPlugin = useCallback(() => {
-      debugLog('🧹 Starting comprehensive plugin cleanup');
-      
-      // Clear any pending timeouts
-      if (disposalTimeoutRef.current) {
-        clearTimeout(disposalTimeoutRef.current);
-        disposalTimeoutRef.current = null;
-      }
-      
-      if (renderTimeoutRef.current) {
-        clearTimeout(renderTimeoutRef.current);
-        renderTimeoutRef.current = null;
-      }
-      
-      // Set mounted to false immediately
-      mountedRef.current = false;
-      
-      // Remove instance from global registry
-      const instanceId = instanceIdRef.current;
-      if (MOLSTAR_INSTANCES.has(instanceId)) {
-        MOLSTAR_INSTANCES.delete(instanceId);
-        debugLog(`Removed instance ${instanceId} from registry`);
-      }
-      
-      // Clean up subscriptions
-      if (selectionSubscriptionRef.current) {
-        try {
-          selectionSubscriptionRef.current.unsubscribe();
-          selectionSubscriptionRef.current = null;
-          debugLog('Selection subscriptions cleaned up');
-        } catch (error) {
-          debugLog(`Error cleaning up subscriptions: ${error}`, 'warning');
-        }
-      }
-      
-      // Clean up global molstar reference if it's ours
-      if ((window as any).molstar && (window as any).molstar._instanceId === instanceId) {
-        (window as any).molstar = null;
-        debugLog('Global molstar reference cleared');
-      }
-      
-      // Dispose of plugin with proper error handling
-      if (pluginRef.current) {
-        try {
-          // Try graceful disposal first
-          pluginRef.current.dispose();
-          debugLog('Plugin disposed gracefully');
-        } catch (error) {
-          debugLog(`Error during plugin disposal: ${error}`, 'warning');
-          // Force cleanup even if disposal fails
-        } finally {
-          pluginRef.current = null;
-        }
-      }
-      
-      // Force clear container with multiple attempts
-      if (containerRef.current) {
-        try {
-          // Method 1: Clear innerHTML
-          containerRef.current.innerHTML = '';
-          
-          // Method 2: Remove all child nodes
-          while (containerRef.current.firstChild) {
-            containerRef.current.removeChild(containerRef.current.firstChild);
-          }
-          
-          // Method 3: Reset any data attributes
-          Array.from(containerRef.current.attributes).forEach(attr => {
-            if (attr.name.startsWith('data-')) {
-              containerRef.current?.removeAttribute(attr.name);
-            }
-          });
-          
-          debugLog('Container completely cleared');
-        } catch (error) {
-          debugLog(`Error clearing container: ${error}`, 'warning');
-        }
-      }
-      
-      // Reset all state
-      setIsInitialized(false);
-      setIsLoading(false);
-      setHasStructure(false);
-      setStructureLoadError(null);
-      setCurrentSelection(null);
-      waterRepresentationRef.current = null;
-      originalRepresentationsRef.current = [];
-      selectionOnlyModeRef.current = false;
-      initializingRef.current = false;
-      
-      debugLog('Plugin cleanup completed');
-    }, [debugLog]);
-
-    // Enhanced initialization with prevention of multiple React roots
-    const initializePlugin = useCallback(async () => {
-      const instanceId = instanceIdRef.current;
-      
-      // Prevent multiple initializations
-      if (!containerRef.current || pluginRef.current || initializingRef.current) {
-        debugLog('Plugin initialization skipped - already initialized or in progress', 'warning');
-        return;
-      }
-
-      // Check if component is still mounted
-      if (!mountedRef.current) {
-        debugLog('Plugin initialization skipped - component unmounted', 'warning');
-        return;
-      }
-
-      // Check if this instance is already in the registry
-      if (MOLSTAR_INSTANCES.has(instanceId)) {
-        debugLog('Plugin initialization skipped - instance already exists', 'warning');
-        return;
-      }
-
-      try {
-        debugLog(`🚀 Starting plugin initialization for instance: ${instanceId}`);
-        initializingRef.current = true;
-        setIsLoading(true);
-        setDebugInfo(''); // Clear debug info
-        
-        // Add to registry immediately
-        MOLSTAR_INSTANCES.add(instanceId);
-        
-        // Force clear container to prevent React root conflicts
-        if (containerRef.current) {
-          // Clear completely - this is critical for preventing the React root error
-          containerRef.current.innerHTML = '';
-          
-          // Remove any React-specific attributes that might cause conflicts
-          Array.from(containerRef.current.attributes).forEach(attr => {
-            if (attr.name.startsWith('data-react') || attr.name.startsWith('data-molstar')) {
-              containerRef.current?.removeAttribute(attr.name);
-            }
-          });
-          
-          // Add a small delay to ensure DOM is completely clear
-          await new Promise(resolve => setTimeout(resolve, 100));
-          
-          debugLog('Container cleared and ready');
-        }
-        
-        // Check mount status after delay
-        if (!mountedRef.current) {
-          debugLog('Component unmounted during initialization delay', 'warning');
-          MOLSTAR_INSTANCES.delete(instanceId);
-          return;
-        }
-        
-        const spec = createSpec();
-        debugLog('Plugin spec created');
-        
-        // Create plugin with enhanced error handling
-        debugLog('Creating Molstar plugin UI');
-        const plugin = await createPluginUI({
-          target: containerRef.current,
-          render: renderReact18,
-          spec
-        });
-        
-        // Check if component is still mounted after async operation
-        if (!mountedRef.current) {
-          debugLog('Component unmounted during plugin creation - cleaning up', 'warning');
-          try {
-            plugin.dispose();
-          } catch (e) {
-            debugLog('Error disposing plugin during unmount cleanup', 'warning');
-          }
-          MOLSTAR_INSTANCES.delete(instanceId);
-          return;
-        }
-        
-        pluginRef.current = plugin;
-        
-        // Make molstar globally accessible with instance tracking
-        (window as any).molstar = plugin;
-        (window as any).molstar._instanceId = instanceId;
-        debugLog('Molstar plugin initialized and made globally accessible');
-        
-        // Setup selection monitoring
-        setupSelectionMonitoring(plugin);
-        
-        // Validate the plugin state
-        setTimeout(() => {
-          const isValid = validatePluginState();
-          if (isValid) {
-            debugLog('Plugin validation successful');
-          } else {
-            debugLog('Plugin validation failed', 'warning');
-          }
-        }, 200);
-        
-        setIsInitialized(true);
-        onReady?.(plugin);
-        debugLog('✅ Plugin initialization completed successfully');
-        
-      } catch (error) {
-        debugLog(`❌ Failed to initialize molstar plugin: ${error}`, 'error');
-        MOLSTAR_INSTANCES.delete(instanceId);
-        onError?.(error as Error);
-        initializingRef.current = false;
-        setIsInitialized(false);
-      } finally {
-        setIsLoading(false);
-        initializingRef.current = false;
-      }
-    }, [createSpec, onReady, onError, setupSelectionMonitoring, debugLog, validatePluginState]);
-
-    // Other methods (keeping existing implementations for brevity)
-    const clearSelection = useCallback(async (): Promise<void> => {
-      try {
-        (window as any).molstar?.managers.interactivity.lociSelects.clear();
-        (window as any).molstar?.managers.interactivity.lociHighlights.clear();
-        updateSelectionState(null);
-        debugLog('Selection cleared');
-      } catch (error) {
-        debugLog(`Failed to clear selection: ${error}`, 'error');
         throw error;
+      } finally {
+        setIsLoading(false);
       }
-    }, [updateSelectionState, debugLog]);
+    }, [debugLog, isInitialized]);
 
+    // Simple camera controls
     const resetView = useCallback(() => {
-      if (!pluginRef.current) return;
-      PluginCommands.Camera.Reset(pluginRef.current);
-      debugLog('Camera view reset');
-    }, [debugLog]);
+      if (pluginRef.current) {
+        PluginCommands.Camera.Reset(pluginRef.current);
+      }
+    }, []);
 
     const zoomIn = useCallback(() => {
-      if (!pluginRef.current) return;
-      PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 20 });
-      debugLog('Zoomed in');
-    }, [debugLog]);
+      if (pluginRef.current) {
+        PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 20 });
+      }
+    }, []);
 
     const zoomOut = useCallback(() => {
-      if (!pluginRef.current) return;
-      PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 50 });
-      debugLog('Zoomed out');
-    }, [debugLog]);
+      if (pluginRef.current) {
+        PluginCommands.Camera.Focus(pluginRef.current, { center: Vec3.create(0, 0, 0), radius: 50 });
+      }
+    }, []);
 
     const setRepresentation = useCallback(async (type: 'cartoon' | 'surface' | 'ball-and-stick' | 'spacefill') => {
       if (!pluginRef.current) return;
 
       try {
-        debugLog(`Changing representation to: ${type}`);
-        
         const reprs = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
         for (const repr of reprs) {
           await PluginCommands.State.RemoveObject(pluginRef.current, { state: pluginRef.current.state.data, ref: repr.transform.ref });
@@ -788,16 +585,71 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           type: reprType,
           color: 'chain-id'
         });
-
-        debugLog(`Representation changed to: ${type}`);
-
       } catch (error) {
         debugLog(`Failed to set representation: ${error}`, 'error');
-        onError?.(error as Error);
       }
-    }, [onError, debugLog]);
+    }, [debugLog]);
 
-    // Placeholder implementations for other methods
+    const forceRerender = useCallback(async (): Promise<void> => {
+      if (pluginRef.current) {
+        await PluginCommands.Camera.Reset(pluginRef.current);
+      }
+    }, []);
+
+    // Cleanup function
+    const cleanup = useCallback(() => {
+      debugLog('Starting cleanup');
+      mountedRef.current = false;
+      
+      // Clear timeouts
+      if (disposalTimeoutRef.current) {
+        clearTimeout(disposalTimeoutRef.current);
+        disposalTimeoutRef.current = null;
+      }
+      
+      if (initTimeoutRef.current) {
+        clearTimeout(initTimeoutRef.current);
+        initTimeoutRef.current = null;
+      }
+      
+      // Clean up subscriptions
+      if (selectionSubscriptionRef.current) {
+        try {
+          selectionSubscriptionRef.current.unsubscribe();
+          selectionSubscriptionRef.current = null;
+        } catch (error) {
+          debugLog(`Error cleaning up subscriptions: ${error}`, 'warning');
+        }
+      }
+      
+      // Dispose plugin
+      const instanceId = instanceIdRef.current;
+      if (pluginRef.current) {
+        try {
+          pluginRef.current.dispose();
+          debugLog('Plugin disposed');
+        } catch (error) {
+          debugLog(`Error disposing plugin: ${error}`, 'warning');
+        }
+        pluginRef.current = null;
+      }
+      
+      // Remove from global registry
+      ACTIVE_INSTANCES.delete(instanceId);
+      
+      // Clear container
+      if (containerRef.current) {
+        try {
+          containerRef.current.innerHTML = '';
+        } catch (error) {
+          debugLog(`Error clearing container: ${error}`, 'warning');
+        }
+      }
+      
+      debugLog('Cleanup completed');
+    }, [debugLog]);
+
+    // Placeholder implementations for remaining methods
     const showWaterMolecules = useCallback(async () => { throw new Error('Not implemented'); }, []);
     const hideWaterMolecules = useCallback(async () => { throw new Error('Not implemented'); }, []);
     const hideLigands = useCallback(async () => { throw new Error('Not implemented'); }, []);
@@ -810,6 +662,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const getStructureInfo = useCallback(async (): Promise<string> => { return 'Not implemented'; }, []);
     const getCurrentSelection = useCallback(() => currentSelection, [currentSelection]);
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => { throw new Error('Not implemented'); }, []);
+    const clearSelection = useCallback(async (): Promise<void> => { throw new Error('Not implemented'); }, []);
     const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => { throw new Error('Not implemented'); }, []);
     const getPlugin = useCallback(() => pluginRef.current, []);
 
@@ -844,102 +697,84 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       selectResidueRange, clearSelection, selectResidue, forceRerender, validatePluginState
     ]);
 
-    // Enhanced mount and unmount handling
+    // Initialize plugin on mount
     useEffect(() => {
-      // Set mounted flag
       mountedRef.current = true;
-      debugLog('Component mounting - initializing plugin');
+      debugLog('Component mounting - starting initialization');
       
-      // Delay initialization slightly to ensure DOM is ready
+      // Start initialization with a small delay to ensure DOM is ready
       const initTimeout = setTimeout(() => {
         if (mountedRef.current) {
           initializePlugin();
         }
-      }, 200);
+      }, 100);
 
-      // Cleanup function
       return () => {
-        debugLog('Component unmounting - starting cleanup');
-        
-        // Clear initialization timeout if still pending
         clearTimeout(initTimeout);
-        
-        // Schedule cleanup with a small delay to ensure all async operations complete
-        disposalTimeoutRef.current = setTimeout(() => {
-          cleanupPlugin();
-        }, 100);
+        cleanup();
       };
-    }, [initializePlugin, cleanupPlugin, debugLog]);
+    }, [initializePlugin, cleanup, debugLog]);
 
     return (
       <div className={cn("relative w-full h-full", className)}>
-        {/* CRITICAL FIX: Molstar container with constrained dimensions */}
+        {/* Molstar container */}
         <div 
           ref={containerRef} 
           className="w-full h-full rounded-lg overflow-hidden bg-gray-900 border border-gray-700"
           style={{ 
             minHeight: '400px',
-            maxWidth: '100%',
-            maxHeight: '100%',
-            pointerEvents: 'auto' // Ensure container can receive events
+            pointerEvents: 'auto',
+            position: 'relative'
           }}
-          data-molstar-container={instanceIdRef.current}
+          data-molstar-instance={instanceIdRef.current}
         />
         
         {/* Loading overlay */}
         {isLoading && (
-          <div className="absolute inset-0 bg-gray-900/50 flex items-center justify-center rounded-lg z-10">
+          <div className="absolute inset-0 bg-gray-900/80 flex items-center justify-center rounded-lg z-20">
             <div className="flex flex-col items-center space-y-3 text-white">
               <Loader2 className="h-8 w-8 animate-spin" />
-              <span className="text-sm">Loading structure...</span>
-              {debugInfo && (
-                <div className="max-w-md text-xs text-gray-300 bg-gray-800/50 p-2 rounded border max-h-24 overflow-y-auto">
-                  <pre className="whitespace-pre-wrap">{debugInfo.split('\n').slice(-5).join('\n')}</pre>
-                </div>
-              )}
+              <span className="text-sm">
+                {!isInitialized ? 'Initializing 3D viewer...' : 'Loading structure...'}
+              </span>
             </div>
           </div>
         )}
 
-        {/* Error overlay */}
-        {structureLoadError && (
-          <div className="absolute inset-0 bg-red-900/20 flex items-center justify-center rounded-lg z-10">
-            <div className="bg-red-800/90 text-white p-4 rounded-lg max-w-md">
-              <div className="flex items-center space-x-2 mb-2">
-                <AlertTriangle className="h-5 w-5" />
-                <span className="font-semibold">Structure Load Error</span>
+        {/* Initialization error overlay */}
+        {initializationError && (
+          <div className="absolute inset-0 bg-red-900/20 flex items-center justify-center rounded-lg z-20">
+            <div className="bg-red-800/90 text-white p-6 rounded-lg max-w-md text-center">
+              <div className="flex items-center justify-center space-x-2 mb-3">
+                <AlertTriangle className="h-6 w-6" />
+                <span className="font-semibold">Plugin Initialization Failed</span>
               </div>
-              <p className="text-sm mb-3">{structureLoadError}</p>
-              {debugInfo && (
-                <details className="text-xs">
-                  <summary className="cursor-pointer">Debug Info</summary>
-                  <pre className="mt-2 whitespace-pre-wrap bg-red-900/50 p-2 rounded max-h-32 overflow-y-auto">
-                    {debugInfo}
-                  </pre>
-                </details>
-              )}
+              <p className="text-sm mb-4">{initializationError}</p>
+              <div className="flex justify-center space-x-2">
+                <Button
+                  onClick={retryInitialization}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                  disabled={isLoading}
+                >
+                  <RefreshCw className={cn("h-4 w-4 mr-2", isLoading && "animate-spin")} />
+                  Retry Initialization
+                </Button>
+              </div>
+              <p className="text-xs text-red-200 mt-3">
+                Attempt {initializationAttempts.current}/{maxInitializationAttempts}
+              </p>
             </div>
           </div>
         )}
 
-        {/* No structure message */}
-        {isInitialized && !isLoading && !hasStructure && !structureLoadError && (
-          <div className="absolute inset-0 bg-gray-800/20 flex items-center justify-center rounded-lg z-10">
-            <div className="text-center text-gray-400">
-              <div className="text-sm">No structure loaded</div>
-              <div className="text-xs mt-1">Use the sidebar to load a protein structure</div>
-            </div>
-          </div>
-        )}
-
-        {/* Basic controls overlay - FIXED: Proper z-index and pointer events */}
-        {isInitialized && !isLoading && hasStructure && (
-          <div className="absolute top-4 right-4 flex flex-col space-y-2 z-20" style={{ pointerEvents: 'auto' }}>
+        {/* Basic controls overlay */}
+        {isInitialized && !isLoading && (
+          <div className="absolute top-4 right-4 flex flex-col space-y-2 z-20">
             <Button
               size="sm"
               variant="secondary"
               onClick={resetView}
-              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600 pointer-events-auto"
+              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600"
               title="Reset View"
             >
               <Home className="h-4 w-4" />
@@ -948,7 +783,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
               size="sm"
               variant="secondary"
               onClick={zoomIn}
-              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600 pointer-events-auto"
+              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600"
               title="Zoom In"
             >
               <ZoomIn className="h-4 w-4" />
@@ -957,27 +792,18 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
               size="sm"
               variant="secondary"
               onClick={zoomOut}
-              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600 pointer-events-auto"
+              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600"
               title="Zoom Out"
             >
               <ZoomOut className="h-4 w-4" />
             </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={forceRerender}
-              className="bg-gray-800/90 hover:bg-gray-700 text-white border-gray-600 pointer-events-auto"
-              title="Force Rerender"
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
           </div>
         )}
 
-        {/* Selection info overlay - FIXED: Proper z-index */}
+        {/* Selection info overlay */}
         {currentSelection && (
-          <div className="absolute bottom-4 left-4 right-4 z-20" style={{ pointerEvents: 'none' }}>
-            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm pointer-events-auto">
+          <div className="absolute bottom-4 left-4 right-4 z-20">
+            <Card className="bg-gray-800/90 border-gray-600 backdrop-blur-sm">
               <div className="p-3">
                 <p className="text-white text-sm font-medium">
                   Selected: {currentSelection.description}
@@ -992,15 +818,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           </div>
         )}
 
-        {/* Debug info panel (only in development) */}
-        {process.env.NODE_ENV === 'development' && debugInfo && (
-          <div className="absolute top-4 left-4 max-w-sm z-30" style={{ pointerEvents: 'auto' }}>
-            <details className="bg-gray-800/90 text-white p-2 rounded text-xs border border-gray-600">
-              <summary className="cursor-pointer">Debug Info ({debugInfo.split('\n').length} lines)</summary>
-              <pre className="mt-2 whitespace-pre-wrap max-h-40 overflow-y-auto">
-                {debugInfo}
-              </pre>
-            </details>
+        {/* No structure message */}
+        {isInitialized && !isLoading && !hasStructure && !structureLoadError && !initializationError && (
+          <div className="absolute inset-0 bg-gray-800/20 flex items-center justify-center rounded-lg z-10">
+            <div className="text-center text-gray-400">
+              <div className="text-sm">3D Viewer Ready</div>
+              <div className="text-xs mt-1">Load a protein structure to begin</div>
+            </div>
           </div>
         )}
       </div>
