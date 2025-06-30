@@ -106,6 +106,160 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return spec;
     }, []);
 
+    // Extract selection information from structure element location
+    const extractSelectionInfo = useCallback((location: StructureElement.Location): SelectionInfo | null => {
+      try {
+        const residueName = StructureProperties.residue.label_comp_id(location);
+        const residueNumber = StructureProperties.residue.label_seq_id(location);
+        const chainId = StructureProperties.chain.label_asym_id(location);
+        const atomName = StructureProperties.atom.label_atom_id(location);
+        const elementType = StructureProperties.atom.type_symbol(location);
+
+        let coordinates;
+        try {
+          const unit = location.unit;
+          const elementIndex = location.element;
+          const pos = unit.conformation.position(elementIndex, Vec3());
+          coordinates = { x: pos[0], y: pos[1], z: pos[2] };
+        } catch (e) {
+          // Coordinates not available
+          console.log('⚠️ Coordinates not available for selection');
+        }
+
+        const description = `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`;
+
+        return {
+          residueName,
+          residueNumber,
+          chainId,
+          atomName,
+          elementType,
+          coordinates,
+          atomCount: 1, // For single atom selection
+          description
+        };
+
+      } catch (error) {
+        console.error('❌ Error extracting selection info:', error);
+        return null;
+      }
+    }, []);
+
+    // Monitor selection changes through multiple channels
+    const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
+      console.log('🔍 Setting up selection monitoring...');
+      
+      // Clean up previous subscriptions
+      if (selectionSubscriptionRef.current) {
+        selectionSubscriptionRef.current.unsubscribe();
+      }
+
+      // Method 1: Listen to structure selection manager changes (most reliable)
+      const selectionSubscription = plugin.managers.structure.selection.events.changed.subscribe(() => {
+        console.log('🎯 Structure selection manager event fired');
+        
+        try {
+          const manager = plugin.managers.structure.selection;
+          
+          if (manager.entries && manager.entries.length > 0) {
+            const entry = manager.entries[0];
+            if (entry && entry.selection && StructureElement.Loci.is(entry.selection)) {
+              const loci = entry.selection;
+              
+              if (loci.elements && loci.elements.length > 0) {
+                const element = loci.elements[0];
+                const structure = loci.structure;
+                const unit = structure.units[element.unit];
+                
+                if (unit && element.indices && element.indices.length > 0) {
+                  const atomIndex = element.indices[0];
+                  const elementIndex = unit.elements[atomIndex];
+                  const location = StructureElement.Location.create(structure, unit, elementIndex);
+                  
+                  const selectionInfo = extractSelectionInfo(location);
+                  if (selectionInfo) {
+                    console.log('✅ Manual selection detected via selection manager:', selectionInfo.description);
+                    setCurrentSelection(selectionInfo);
+                    onSelectionChange?.(selectionInfo);
+                  }
+                }
+              }
+            }
+          } else {
+            // No selection - clear current selection
+            console.log('🔄 Selection cleared via selection manager');
+            setCurrentSelection(null);
+            onSelectionChange?.(null);
+          }
+        } catch (error) {
+          console.log('⚠️ Error processing selection manager event:', error);
+        }
+      });
+
+      // Method 2: Listen to interaction events as backup
+      const interactionSubscription = plugin.behaviors.interaction.click.subscribe((event) => {
+        console.log('🖱️ Click interaction event:', event);
+        
+        // Small delay to allow selection to be processed
+        setTimeout(() => {
+          try {
+            // Check current highlights first
+            const currentLoci = plugin.managers.interactivity.lociHighlights.current.loci;
+            
+            if (currentLoci && StructureElement.Loci.is(currentLoci)) {
+              console.log('🎯 Processing highlighted loci from click');
+              
+              if (currentLoci.elements && currentLoci.elements.length > 0) {
+                const element = currentLoci.elements[0];
+                const structure = currentLoci.structure;
+                const unit = structure.units[element.unit];
+                
+                if (unit && element.indices && element.indices.length > 0) {
+                  const atomIndex = element.indices[0];
+                  const elementIndex = unit.elements[atomIndex];
+                  const location = StructureElement.Location.create(structure, unit, elementIndex);
+                  
+                  const selectionInfo = extractSelectionInfo(location);
+                  if (selectionInfo) {
+                    console.log('✅ Manual selection detected via click interaction:', selectionInfo.description);
+                    setCurrentSelection(selectionInfo);
+                    onSelectionChange?.(selectionInfo);
+                  }
+                }
+              }
+            }
+          } catch (error) {
+            console.log('⚠️ Error processing click interaction:', error);
+          }
+        }, 100); // Give it more time to process
+      });
+
+      // Method 3: Listen to hover events for immediate feedback
+      const hoverSubscription = plugin.behaviors.interaction.hover.subscribe((event) => {
+        // Only process if there's a current selection that matches the hover
+        if (currentSelection && event.current && StructureElement.Loci.is(event.current.loci)) {
+          console.log('👆 Hover detected on selected element');
+        }
+      });
+
+      // Store subscription for cleanup
+      selectionSubscriptionRef.current = {
+        unsubscribe: () => {
+          selectionSubscription.unsubscribe();
+          interactionSubscription.unsubscribe();
+          hoverSubscription.unsubscribe();
+        }
+      };
+
+      console.log('✅ Selection monitoring setup complete');
+      
+      return () => {
+        if (selectionSubscriptionRef.current) {
+          selectionSubscriptionRef.current.unsubscribe();
+        }
+      };
+    }, [extractSelectionInfo, onSelectionChange, currentSelection]);
+
     // Direct implementation following your working code exactly
     const selectResidue = useCallback(async (selectedResidue: number, chainId?: string): Promise<string> => {
       console.log(`🎯 selectResidue called with residue: ${selectedResidue}, chain: ${chainId}`);
@@ -172,12 +326,26 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
         console.log('✅ Highlight applied via lociHighlights');
 
-        // Extract selection info
-        const selectionInfo = extractSelectionInfo(loci);
-        if (selectionInfo) {
-          setCurrentSelection(selectionInfo);
-          onSelectionChange?.(selectionInfo);
-          console.log('✅ Selection info updated:', selectionInfo);
+        // Extract selection info from the first element
+        if (loci.elements && loci.elements.length > 0) {
+          const element = loci.elements[0];
+          const structure = loci.structure;
+          const unit = structure.units[element.unit];
+          
+          if (unit && element.indices && element.indices.length > 0) {
+            const atomIndex = element.indices[0];
+            const elementIndex = unit.elements[atomIndex];
+            const location = StructureElement.Location.create(structure, unit, elementIndex);
+            
+            const selectionInfo = extractSelectionInfo(location);
+            if (selectionInfo) {
+              // Update with total atom count for the entire selection
+              selectionInfo.atomCount = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
+              setCurrentSelection(selectionInfo);
+              onSelectionChange?.(selectionInfo);
+              console.log('✅ Selection info updated:', selectionInfo);
+            }
+          }
         }
 
         const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
@@ -188,7 +356,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         throw new Error(`Failed to select residue ${selectedResidue}: ${errorMessage}`);
       }
-    }, [onSelectionChange]);
+    }, [onSelectionChange, extractSelectionInfo]);
 
     // Simplified residue range selection
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
@@ -250,89 +418,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         throw new Error(`Failed to select residue range: ${errorMessage}`);
       }
     }, [onSelectionChange]);
-
-    // Extract selection information from loci
-    const extractSelectionInfo = useCallback((loci: any): SelectionInfo | null => {
-      try {
-        if (!StructureElement.Loci.is(loci)) return null;
-        if (!loci.elements || loci.elements.length === 0) return null;
-
-        const element = loci.elements[0];
-        if (!element.indices || element.indices.length === 0) return null;
-
-        const structure = loci.structure;
-        const unit = structure.units[element.unit];
-        if (!unit) return null;
-
-        const atomIndex = element.indices[0];
-        const elementIndex = unit.elements[atomIndex];
-        const location = StructureElement.Location.create(structure, unit, elementIndex);
-
-        const residueName = StructureProperties.residue.label_comp_id(location);
-        const residueNumber = StructureProperties.residue.label_seq_id(location);
-        const chainId = StructureProperties.chain.label_asym_id(location);
-        const atomName = StructureProperties.atom.label_atom_id(location);
-        const elementType = StructureProperties.atom.type_symbol(location);
-
-        let coordinates;
-        try {
-          const pos = unit.conformation.position(elementIndex, Vec3());
-          coordinates = { x: pos[0], y: pos[1], z: pos[2] };
-        } catch (e) {
-          // Coordinates not available
-        }
-
-        return {
-          residueName,
-          residueNumber,
-          chainId,
-          atomName,
-          elementType,
-          coordinates,
-          atomCount: element.indices.length,
-          description: `${residueName} ${residueNumber} (Chain ${chainId}) - ${atomName} atom`
-        };
-
-      } catch (error) {
-        console.error('❌ Error extracting selection info:', error);
-        return null;
-      }
-    }, []);
-
-    // Monitor selection changes
-    const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
-      // Clean up previous subscription
-      if (selectionSubscriptionRef.current) {
-        selectionSubscriptionRef.current.unsubscribe();
-      }
-
-      // Listen to click events for manual selection
-      selectionSubscriptionRef.current = plugin.behaviors.interaction.click.subscribe(() => {
-        // Small delay to ensure selection is processed
-        setTimeout(() => {
-          try {
-            // Check if there's a current selection in the interaction manager
-            const currentLoci = plugin.managers.interactivity.lociHighlights.current.loci;
-            if (currentLoci && StructureElement.Loci.is(currentLoci)) {
-              const selectionInfo = extractSelectionInfo(currentLoci);
-              if (selectionInfo) {
-                setCurrentSelection(selectionInfo);
-                onSelectionChange?.(selectionInfo);
-                console.log('✅ Click selection detected:', selectionInfo.description);
-              }
-            }
-          } catch (error) {
-            console.log('⚠️ Error processing click selection:', error);
-          }
-        }, 50);
-      });
-
-      return () => {
-        if (selectionSubscriptionRef.current) {
-          selectionSubscriptionRef.current.unsubscribe();
-        }
-      };
-    }, [extractSelectionInfo, onSelectionChange]);
 
     // Show only selected region - IMPLEMENTED!
     const showOnlySelected = useCallback(async (): Promise<void> => {
@@ -501,7 +586,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         (window as any).molstar = plugin;
         console.log('✅ Molstar plugin initialized and made globally accessible');
         
-        // Setup selection monitoring
+        // Setup selection monitoring - CRITICAL FOR MANUAL SELECTION CAPTURE
         setupSelectionMonitoring(plugin);
         
         setIsInitialized(true);
