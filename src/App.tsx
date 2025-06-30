@@ -23,6 +23,7 @@ function App() {
   const [viewerReady, setViewerReady] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
+  const [isLoadingStructure, setIsLoadingStructure] = useState(false);
 
   // Check for API key on mount
   useEffect(() => {
@@ -36,22 +37,32 @@ function App() {
     if (!viewerRef.current) return;
 
     try {
+      setIsLoadingStructure(true);
       setSelectedProtein(proteinId);
       setCurrentStructureName(proteinId);
+      
+      console.log(`🔄 Loading protein: ${proteinId} from file: ${file}`);
       await viewerRef.current.loadStructure(`/data/${file}`);
+      
       setIsStructureLoaded(true);
       setCurrentSelection(null); // Clear selection when loading new structure
+      
       toast({
         title: "Structure Loaded",
         description: `Successfully loaded ${proteinId}`,
       });
+      
+      console.log(`✅ Successfully loaded protein: ${proteinId}`);
     } catch (error) {
-      console.error('Failed to load protein:', error);
+      console.error('❌ Failed to load protein:', error);
+      setIsStructureLoaded(false);
       toast({
         title: "Error",
         description: "Failed to load protein structure",
         variant: "destructive",
       });
+    } finally {
+      setIsLoadingStructure(false);
     }
   }, []);
 
@@ -60,13 +71,18 @@ function App() {
     if (!viewerRef.current) return;
 
     try {
+      setIsLoadingStructure(true);
+      
       // Create a blob URL for the content
       const blob = new Blob([content], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       
       setSelectedProtein('');
       setCurrentStructureName(filename);
+      
+      console.log(`🔄 Loading uploaded file: ${filename}`);
       await viewerRef.current.loadStructure(url);
+      
       setIsStructureLoaded(true);
       setCurrentSelection(null); // Clear selection when loading new structure
       
@@ -77,13 +93,18 @@ function App() {
         title: "File Loaded",
         description: `Successfully loaded ${filename}`,
       });
+      
+      console.log(`✅ Successfully loaded uploaded file: ${filename}`);
     } catch (error) {
-      console.error('Failed to load file:', error);
+      console.error('❌ Failed to load file:', error);
+      setIsStructureLoaded(false);
       toast({
         title: "Error",
         description: "Failed to load uploaded file",
         variant: "destructive",
       });
+    } finally {
+      setIsLoadingStructure(false);
     }
   }, []);
 
@@ -132,26 +153,43 @@ function App() {
     }
   }, []);
 
-  // Initialize with 2PGH as default protein
+  // Enhanced viewer ready handler
+  const handleViewerReady = useCallback(() => {
+    console.log('🎯 Molstar viewer ready - starting default protein load');
+    setViewerReady(true);
+  }, []);
+
+  // Load default protein when viewer is ready
   useEffect(() => {
     const loadDefaultProtein = async () => {
-      if (viewerReady && viewerRef.current && !isStructureLoaded) {
+      if (viewerReady && viewerRef.current && !isStructureLoaded && !isLoadingStructure) {
+        console.log('🔄 Attempting to load default protein (2PGH)...');
+        
         try {
+          setIsLoadingStructure(true);
           await viewerRef.current.loadStructure('/data/2PGH.pdb');
           setIsStructureLoaded(true);
+          console.log('✅ Default protein (2PGH) loaded successfully');
+          
           toast({
             title: "Default Structure Loaded",
             description: "Loaded 2PGH (Porcine Hemoglobin) as default",
           });
         } catch (error) {
-          console.error('Failed to load default protein:', error);
-          // If default fails, just continue without showing error to user
+          console.error('❌ Failed to load default protein:', error);
+          setIsStructureLoaded(false);
+          // Don't show error toast for default loading failure - user can manually load
+        } finally {
+          setIsLoadingStructure(false);
         }
       }
     };
 
-    loadDefaultProtein();
-  }, [viewerReady, isStructureLoaded]);
+    // Add small delay to ensure Molstar is fully initialized
+    const loadTimeout = setTimeout(loadDefaultProtein, 500);
+    
+    return () => clearTimeout(loadTimeout);
+  }, [viewerReady, isStructureLoaded, isLoadingStructure]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
@@ -193,7 +231,7 @@ function App() {
           <div className="lg:col-span-3 space-y-4 overflow-y-auto max-h-full">
             
             {/* Current Structure Info */}
-            {isStructureLoaded && (
+            {(isStructureLoaded || isLoadingStructure) && (
               <Card className="bg-gray-800/50 border-gray-700">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-white flex items-center text-sm">
@@ -203,9 +241,13 @@ function App() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-center">
-                    <div className="text-lg font-semibold text-white">{currentStructureName}</div>
-                    <div className="text-sm text-gray-400 capitalize">{currentRepresentation} view</div>
-                    {currentSelection && (
+                    <div className="text-lg font-semibold text-white">
+                      {isLoadingStructure ? 'Loading...' : currentStructureName}
+                    </div>
+                    <div className="text-sm text-gray-400 capitalize">
+                      {isLoadingStructure ? 'Please wait' : `${currentRepresentation} view`}
+                    </div>
+                    {currentSelection && !isLoadingStructure && (
                       <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded">
                         <div className="text-xs text-green-300 font-medium">Selected:</div>
                         <div className="text-sm text-green-200">
@@ -274,23 +316,25 @@ function App() {
                       Interactive protein structure visualization powered by Molstar
                     </CardDescription>
                   </div>
-                  {isStructureLoaded && (
+                  {(isStructureLoaded || isLoadingStructure) && (
                     <div className="text-sm text-gray-400">
-                      Viewing: <span className="text-white font-medium">{currentStructureName}</span>
+                      {isLoadingStructure ? (
+                        <span className="text-blue-400">Loading...</span>
+                      ) : (
+                        <>Viewing: <span className="text-white font-medium">{currentStructureName}</span></>
+                      )}
                     </div>
                   )}
                 </div>
               </CardHeader>
-              <CardContent className="h-[calc(100%-80px)] p-4">
+              <CardContent className="h-[calc(100%-80px)] p-4 relative">
                 <MolstarViewer
                   ref={viewerRef}
                   className="w-full h-full"
-                  onReady={() => {
-                    console.log('Molstar viewer ready');
-                    setViewerReady(true);
-                  }}
+                  onReady={handleViewerReady}
                   onError={(error) => {
-                    console.error('Molstar error:', error);
+                    console.error('❌ Molstar error:', error);
+                    setIsStructureLoaded(false);
                     toast({
                       title: "Viewer Error",
                       description: error.message,
@@ -300,8 +344,8 @@ function App() {
                   onSelectionChange={handleSelectionChange}
                 />
                 
-                {/* Welcome message when no structure is loaded */}
-                {!isStructureLoaded && (
+                {/* Welcome message when no structure is loaded AND not loading */}
+                {!isStructureLoaded && !isLoadingStructure && viewerReady && (
                   <div className="absolute inset-4 flex items-center justify-center bg-gray-900/20 rounded-lg border-2 border-dashed border-gray-600">
                     <div className="text-center">
                       <Dna className="h-16 w-16 text-gray-500 mx-auto mb-4" />
@@ -312,11 +356,32 @@ function App() {
                         Load a sample protein or upload your own PDB file to start exploring 
                         3D molecular structures with advanced visualization tools and AI assistance.
                       </p>
-                      <div className="flex items-center justify-center space-x-2 text-sm text-gray-500">
+                      <div className="flex items-center justify-center space-x-2 text-sm text-gray-500 mb-4">
                         <span>Powered by</span>
                         <ExternalLink className="h-4 w-4" />
                         <span>Molstar + Gemini AI</span>
                       </div>
+                      <Button
+                        onClick={() => handleProteinSelect('2PGH', '2PGH.pdb')}
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        Load Sample Protein
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Loading message */}
+                {isLoadingStructure && (
+                  <div className="absolute inset-4 flex items-center justify-center bg-gray-900/20 rounded-lg border-2 border-dashed border-gray-600">
+                    <div className="text-center">
+                      <div className="h-16 w-16 mx-auto mb-4 animate-spin rounded-full border-4 border-blue-400 border-t-transparent"></div>
+                      <h3 className="text-xl font-semibold text-white mb-2">
+                        Loading Structure...
+                      </h3>
+                      <p className="text-gray-400">
+                        Please wait while we load the protein structure
+                      </p>
                     </div>
                   </div>
                 )}
