@@ -69,6 +69,9 @@ export interface ViewerControls {
   selectResidue: (residueId: number, chainId?: string) => Promise<string>;
 }
 
+// Add a global registry to track active Molstar instances
+const MOLSTAR_INSTANCES = new Set<string>();
+
 const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
   ({ className, onReady, onError, onSelectionChange }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -81,9 +84,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     const originalRepresentationsRef = useRef<string[]>([]);
     const selectionOnlyModeRef = useRef<boolean>(false);
     
-    // CRITICAL FIX: Add initialization state management
-    const initializingRef = useRef<boolean>(false);
+    // CRITICAL FIX: Enhanced state management
     const mountedRef = useRef<boolean>(true);
+    const initializingRef = useRef<boolean>(false);
+    const instanceIdRef = useRef<string>(`molstar-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+    const disposalTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     // Create the plugin specification with minimal UI
     const createSpec = useCallback(() => {
@@ -110,10 +115,15 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       return spec;
     }, []);
 
-    // ENHANCED: Extract selection information with better error handling
+    // ENHANCED: Extract selection information with comprehensive error handling
     const extractSelectionInfo = useCallback((location: StructureElement.Location): SelectionInfo | null => {
       try {
         console.log('🔍 Extracting selection info from location:', location);
+        
+        if (!location || !location.unit || !location.structure) {
+          console.log('❌ Invalid location structure');
+          return null;
+        }
         
         const residueName = StructureProperties.residue.label_comp_id(location);
         const residueNumber = StructureProperties.residue.label_seq_id(location);
@@ -129,9 +139,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         try {
           const unit = location.unit;
           const elementIndex = location.element;
-          const pos = unit.conformation.position(elementIndex, Vec3());
-          coordinates = { x: pos[0], y: pos[1], z: pos[2] };
-          console.log('📍 Coordinates:', coordinates);
+          if (unit && unit.conformation && typeof elementIndex !== 'undefined') {
+            const pos = unit.conformation.position(elementIndex, Vec3());
+            coordinates = { x: pos[0], y: pos[1], z: pos[2] };
+            console.log('📍 Coordinates:', coordinates);
+          }
         } catch (e) {
           console.log('⚠️ Coordinates not available for selection');
         }
@@ -158,9 +170,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // ENHANCED: Helper function to update selection state
+    // ENHANCED: Helper function to update selection state with mount checking
     const updateSelectionState = useCallback((selectionInfo: SelectionInfo | null) => {
-      if (!mountedRef.current) return; // Prevent updates if component is unmounted
+      if (!mountedRef.current) {
+        console.log('⚠️ Component unmounted - skipping selection update');
+        return;
+      }
       
       console.log('🔄 Updating selection state:', selectionInfo);
       setCurrentSelection(selectionInfo);
@@ -173,204 +188,196 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [onSelectionChange]);
 
-    // Monitor selection changes through multiple channels
+    // ENHANCED: Safe interaction event processing
+    const processInteractionEvent = useCallback((eventData: any) => {
+      if (!mountedRef.current) return;
+      
+      try {
+        console.log('🖱️ Processing interaction event:', eventData);
+        
+        // Safely check for loci in the event data
+        let loci = null;
+        
+        if (eventData && eventData.current && eventData.current.loci) {
+          loci = eventData.current.loci;
+        } else if (eventData && eventData.loci) {
+          loci = eventData.loci;
+        } else {
+          console.log('⚠️ No loci found in interaction event');
+          return;
+        }
+        
+        if (!loci || !StructureElement.Loci.is(loci)) {
+          console.log('⚠️ Invalid loci structure');
+          return;
+        }
+        
+        if (loci.elements && loci.elements.length > 0) {
+          const element = loci.elements[0];
+          const structure = loci.structure;
+          
+          if (!structure || !structure.units || !structure.units[element.unit]) {
+            console.log('⚠️ Invalid structure or unit');
+            return;
+          }
+          
+          const unit = structure.units[element.unit];
+          
+          if (!element.indices || element.indices.length === 0) {
+            console.log('⚠️ No indices in element');
+            return;
+          }
+          
+          const atomIndex = element.indices[0];
+          const elementIndex = unit.elements[atomIndex];
+          
+          if (typeof elementIndex === 'undefined') {
+            console.log('⚠️ Invalid element index');
+            return;
+          }
+          
+          const location = StructureElement.Location.create(structure, unit, elementIndex);
+          
+          const selectionInfo = extractSelectionInfo(location);
+          if (selectionInfo) {
+            const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + (el.indices?.length || 0), 0);
+            selectionInfo.atomCount = totalAtoms;
+            
+            console.log('✅ Selection processed from interaction:', selectionInfo.description);
+            updateSelectionState(selectionInfo);
+          }
+        }
+      } catch (error) {
+        console.log('⚠️ Error processing interaction event:', error);
+      }
+    }, [extractSelectionInfo, updateSelectionState]);
+
+    // ENHANCED: Robust selection monitoring setup
     const setupSelectionMonitoring = useCallback((plugin: PluginContext) => {
       console.log('🔍 Setting up enhanced selection monitoring...');
       
       // Clean up previous subscriptions
       if (selectionSubscriptionRef.current) {
-        selectionSubscriptionRef.current.unsubscribe();
+        try {
+          selectionSubscriptionRef.current.unsubscribe();
+          selectionSubscriptionRef.current = null;
+        } catch (error) {
+          console.log('⚠️ Error cleaning up previous subscriptions:', error);
+        }
       }
 
-      // Method 1: Listen to structure selection manager changes (most reliable)
-      const selectionSubscription = plugin.managers.structure.selection.events.changed.subscribe(() => {
-        if (!mountedRef.current) return; // Prevent updates if unmounted
-        
-        console.log('🎯 Structure selection manager event fired');
-        
-        try {
-          const manager = plugin.managers.structure.selection;
+      try {
+        // Method 1: Listen to structure selection manager changes
+        const selectionSubscription = plugin.managers.structure.selection.events.changed.subscribe(() => {
+          if (!mountedRef.current) return;
           
-          if (manager.entries && manager.entries.length > 0) {
-            const entry = manager.entries[0];
-            if (entry && entry.selection && StructureElement.Loci.is(entry.selection)) {
-              const loci = entry.selection;
-              
-              if (loci.elements && loci.elements.length > 0) {
-                const element = loci.elements[0];
-                const structure = loci.structure;
-                const unit = structure.units[element.unit];
-                
-                if (unit && element.indices && element.indices.length > 0) {
-                  const atomIndex = element.indices[0];
-                  const elementIndex = unit.elements[atomIndex];
-                  const location = StructureElement.Location.create(structure, unit, elementIndex);
-                  
-                  const selectionInfo = extractSelectionInfo(location);
-                  if (selectionInfo) {
-                    // Calculate total atom count for all elements
-                    const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
-                    selectionInfo.atomCount = totalAtoms;
-                    
-                    console.log('✅ Manual selection detected via selection manager:', selectionInfo.description);
-                    updateSelectionState(selectionInfo);
-                  }
-                }
-              }
-            }
-          } else {
-            // No selection - clear current selection
-            console.log('🔄 Selection cleared via selection manager');
-            updateSelectionState(null);
-          }
-        } catch (error) {
-          console.log('⚠️ Error processing selection manager event:', error);
-        }
-      });
-
-      // Method 2: Listen to interaction events as backup
-      const interactionSubscription = plugin.behaviors.interaction.click.subscribe((event) => {
-        if (!mountedRef.current) return; // Prevent updates if unmounted
-        
-        console.log('🖱️ Click interaction event fired');
-        
-        // Small delay to allow selection to be processed
-        setTimeout(() => {
-          if (!mountedRef.current) return; // Check again after delay
+          console.log('🎯 Structure selection manager event fired');
           
           try {
-            // Check current highlights as a backup method
-            const currentLoci = plugin.managers.interactivity.lociHighlights.current.loci;
+            const manager = plugin.managers.structure.selection;
             
-            if (currentLoci && StructureElement.Loci.is(currentLoci)) {
-              console.log('🎯 Processing highlighted loci from click interaction');
-              
-              if (currentLoci.elements && currentLoci.elements.length > 0) {
-                const element = currentLoci.elements[0];
-                const structure = currentLoci.structure;
-                const unit = structure.units[element.unit];
-                
-                if (unit && element.indices && element.indices.length > 0) {
-                  const atomIndex = element.indices[0];
-                  const elementIndex = unit.elements[atomIndex];
-                  const location = StructureElement.Location.create(structure, unit, elementIndex);
-                  
-                  const selectionInfo = extractSelectionInfo(location);
-                  if (selectionInfo) {
-                    const totalAtoms = currentLoci.elements.reduce((acc: number, el: any) => acc + el.indices.length, 0);
-                    selectionInfo.atomCount = totalAtoms;
-                    
-                    console.log('✅ Manual selection detected via click interaction:', selectionInfo.description);
-                    updateSelectionState(selectionInfo);
-                  }
-                }
+            if (manager.entries && manager.entries.length > 0) {
+              const entry = manager.entries[0];
+              if (entry && entry.selection && StructureElement.Loci.is(entry.selection)) {
+                processInteractionEvent({ loci: entry.selection });
               }
+            } else {
+              console.log('🔄 Selection cleared via selection manager');
+              updateSelectionState(null);
             }
           } catch (error) {
-            console.log('⚠️ Error processing click interaction:', error);
+            console.log('⚠️ Error processing selection manager event:', error);
           }
-        }, 100);
-      });
+        });
 
-      // Store subscription for cleanup
-      selectionSubscriptionRef.current = {
-        unsubscribe: () => {
-          selectionSubscription.unsubscribe();
-          interactionSubscription.unsubscribe();
-        }
-      };
+        // Method 2: Listen to click interactions as backup
+        const clickSubscription = plugin.behaviors.interaction.click.subscribe((event) => {
+          if (!mountedRef.current) return;
+          
+          console.log('🖱️ Click interaction event fired');
+          
+          // Delay processing to allow selection to be processed
+          setTimeout(() => {
+            if (!mountedRef.current) return;
+            
+            try {
+              const currentHighlights = plugin.managers.interactivity.lociHighlights.current;
+              if (currentHighlights && currentHighlights.loci) {
+                processInteractionEvent({ loci: currentHighlights.loci });
+              }
+            } catch (error) {
+              console.log('⚠️ Error processing click interaction:', error);
+            }
+          }, 100);
+        });
 
-      console.log('✅ Enhanced selection monitoring setup complete');
-      
-      return () => {
-        if (selectionSubscriptionRef.current) {
-          selectionSubscriptionRef.current.unsubscribe();
-        }
-      };
-    }, [extractSelectionInfo, updateSelectionState]);
+        // Store subscriptions for cleanup
+        selectionSubscriptionRef.current = {
+          unsubscribe: () => {
+            try {
+              selectionSubscription.unsubscribe();
+              clickSubscription.unsubscribe();
+            } catch (error) {
+              console.log('⚠️ Error unsubscribing from events:', error);
+            }
+          }
+        };
 
-    // ENHANCED: Fixed manual extraction for programmatic selections
+        console.log('✅ Enhanced selection monitoring setup complete');
+        
+      } catch (error) {
+        console.error('❌ Error setting up selection monitoring:', error);
+      }
+    }, [processInteractionEvent, updateSelectionState]);
+
+    // ENHANCED: Safe manual extraction for programmatic selections
     const extractSelectionFromLoci = useCallback((loci: any): SelectionInfo | null => {
       try {
         console.log('🔍 Extracting selection from loci:', loci);
-        console.log('📊 Loci structure details:', {
-          hasElements: !!loci.elements,
-          elementsCount: loci.elements?.length,
-          hasStructure: !!loci.structure,
-          hasUnits: !!loci.structure?.units
-        });
-
-        if (!loci.elements || loci.elements.length === 0) {
+        
+        if (!loci || !loci.elements || loci.elements.length === 0) {
           console.log('❌ No elements in loci');
           return null;
         }
 
         const element = loci.elements[0];
-        console.log('📊 Element details:', {
-          unit: element.unit,
-          hasIndices: !!element.indices,
-          indicesLength: element.indices?.length,
-          indicesType: typeof element.indices,
-          element: element
-        });
-
-        // Check if element has indices in different possible formats
-        let atomIndices;
-        if (element.indices && element.indices.length > 0) {
-          atomIndices = element.indices;
-        } else if (element.indices && typeof element.indices === 'object') {
-          // Sometimes indices might be in a different format
-          atomIndices = Array.from(element.indices);
-        } else {
+        if (!element || !element.indices || element.indices.length === 0) {
           console.log('❌ No valid indices found in element');
           return null;
         }
 
         const structure = loci.structure;
-        const unit = structure.units[element.unit];
+        if (!structure || !structure.units) {
+          console.log('❌ No valid structure found');
+          return null;
+        }
 
+        const unit = structure.units[element.unit];
         if (!unit) {
           console.log('❌ No unit found for element.unit:', element.unit);
           return null;
         }
 
-        console.log('📊 Unit details:', {
-          hasElements: !!unit.elements,
-          elementsLength: unit.elements?.length,
-          unitKind: unit.kind
-        });
-
-        // Get the first atom index
-        const atomIndex = atomIndices[0];
-        console.log('🎯 Using atomIndex:', atomIndex);
-
-        // Different approaches to get element index
+        const atomIndex = element.indices[0];
         let elementIndex;
         
         if (unit.elements && atomIndex < unit.elements.length) {
           elementIndex = unit.elements[atomIndex];
         } else {
-          // Sometimes atomIndex is already the elementIndex
           elementIndex = atomIndex;
         }
 
-        console.log('🎯 Using elementIndex:', elementIndex);
-
-        // Create location
         const location = StructureElement.Location.create(structure, unit, elementIndex);
-        console.log('🎯 Created location:', location);
-
-        // Extract properties
         const selectionInfo = extractSelectionInfo(location);
+        
         if (selectionInfo) {
           // Calculate total atom count
           const totalAtoms = loci.elements.reduce((acc: number, el: any) => {
-            const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
-            return acc + indicesCount;
+            return acc + (el.indices?.length || 0);
           }, 0);
           selectionInfo.atomCount = totalAtoms;
           
-          console.log('✅ Successfully extracted selection info:', selectionInfo);
+          console.log('✅ Successfully extracted selection info from loci:', selectionInfo);
           return selectionInfo;
         }
 
@@ -382,25 +389,25 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [extractSelectionInfo]);
 
-    // ENHANCED: Direct implementation following your working code exactly
+    // ENHANCED: Robust single residue selection
     const selectResidue = useCallback(async (selectedResidue: number, chainId?: string): Promise<string> => {
       console.log(`🎯 selectResidue called with residue: ${selectedResidue}, chain: ${chainId}`);
       
-      // Use the exact approach from your working code
+      if (!mountedRef.current) {
+        throw new Error('Component unmounted');
+      }
+      
       const data = (window as any).molstar?.managers.structure.hierarchy.current.structures[0]?.cell?.obj?.data;
       if (!data) {
         console.log('❌ No structure data available');
         return 'No structure data available';
       }
 
-      console.log('✅ Structure data found:', data);
-
       try {
         const seq_id = selectedResidue;
         let sel;
 
         if (chainId) {
-          // Select specific residue in specific chain
           sel = Script.getStructureSelection(
             (Q: any) =>
               Q.struct.generator.atomGroups({
@@ -417,7 +424,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             data
           );
         } else {
-          // Use your exact working code for any chain
           sel = Script.getStructureSelection(
             (Q: any) =>
               Q.struct.generator.atomGroups({
@@ -431,52 +437,32 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           );
         }
 
-        console.log('✅ Selection query created:', sel);
-
         const loci = StructureSelection.toLociWithSourceUnits(sel);
-        console.log('✅ Loci created:', loci);
 
         if (!loci.elements || loci.elements.length === 0) {
           throw new Error(`Residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} not found`);
         }
 
-        // Use lociSelects for actual selection (following maintainer's tip)
+        // Apply selection and highlighting
         (window as any).molstar?.managers.interactivity.lociSelects.selectOnly({ loci });
-        console.log('✅ Selection applied via lociSelects');
-
-        // Also highlight for visual feedback (your original working approach)
         (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
-        console.log('✅ Highlight applied via lociHighlights');
 
-        // ENHANCED: Extract selection info manually using the improved method
-        console.log('🔍 Manually extracting selection info for programmatic selection...');
-        
+        // Extract selection info for state management
         const selectionInfo = extractSelectionFromLoci(loci);
         if (selectionInfo) {
-          console.log('✅ Programmatic selection info extracted successfully:', selectionInfo);
           updateSelectionState(selectionInfo);
         } else {
-          console.log('❌ Failed to extract selection info - but selection still worked');
-          
-          // Create a basic selection info as fallback
+          // Create fallback selection info
           const fallbackInfo: SelectionInfo = {
             residueNumber: selectedResidue,
             chainId: chainId,
             description: `Residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} (selected programmatically)`,
-            atomCount: loci.elements.reduce((acc: number, el: any) => {
-              const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
-              return acc + indicesCount;
-            }, 0)
+            atomCount: loci.elements.reduce((acc: number, el: any) => acc + (el.indices?.length || 0), 0)
           };
-          
-          console.log('🔄 Using fallback selection info:', fallbackInfo);
           updateSelectionState(fallbackInfo);
         }
 
-        const totalAtoms = loci.elements.reduce((acc: number, el: any) => {
-          const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
-          return acc + indicesCount;
-        }, 0);
+        const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + (el.indices?.length || 0), 0);
         return `✅ Selected residue ${selectedResidue}${chainId ? ` in chain ${chainId}` : ''} (${totalAtoms} atoms)`;
 
       } catch (error) {
@@ -486,9 +472,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [extractSelectionFromLoci, updateSelectionState]);
 
-    // Simplified residue range selection
+    // Residue range selection
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
       console.log(`🎯 selectResidueRange called:`, query);
+      
+      if (!mountedRef.current) {
+        throw new Error('Component unmounted');
+      }
       
       const data = (window as any).molstar?.managers.structure.hierarchy.current.structures[0]?.cell?.obj?.data;
       if (!data) {
@@ -519,14 +509,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           throw new Error(`No residues found in range ${query.startResidue}-${query.endResidue} for chain ${query.chainId}`);
         }
 
-        // Use both selection and highlighting
         (window as any).molstar?.managers.interactivity.lociSelects.selectOnly({ loci });
         (window as any).molstar?.managers.interactivity.lociHighlights.highlightOnly({ loci });
 
-        const totalAtoms = loci.elements.reduce((acc: number, el: any) => {
-          const indicesCount = el.indices?.length || (el.indices ? Array.from(el.indices).length : 0);
-          return acc + indicesCount;
-        }, 0);
+        const totalAtoms = loci.elements.reduce((acc: number, el: any) => acc + (el.indices?.length || 0), 0);
         const estimatedResidues = Math.ceil(totalAtoms / 10);
 
         const selectionInfo: SelectionInfo = {
@@ -549,7 +535,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [updateSelectionState]);
 
-    // Show only selected region - IMPLEMENTED!
+    // Show only selected region
     const showOnlySelected = useCallback(async (): Promise<void> => {
       if (!pluginRef.current || !currentSelection) {
         throw new Error('No selection available or plugin not ready');
@@ -558,13 +544,11 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       try {
         console.log('👁️ Starting show only selected for:', currentSelection);
 
-        // Store current representations for later restoration
         const currentReprs = pluginRef.current.state.data.select(
           StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
         );
         originalRepresentationsRef.current = currentReprs.map(repr => repr.transform.ref);
 
-        // Remove all existing representations
         for (const repr of currentReprs) {
           await PluginCommands.State.RemoveObject(pluginRef.current, {
             state: pluginRef.current.state.data,
@@ -572,7 +556,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           });
         }
 
-        // Get the structure
         const structures = pluginRef.current.state.data.select(
           StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure)
         );
@@ -586,10 +569,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           throw new Error('No structure data available');
         }
 
-        // Create selection for the current selection
         let sel;
         if (currentSelection.rangeStart && currentSelection.rangeEnd && currentSelection.chainId) {
-          // Handle range selection
           sel = Script.getStructureSelection(
             (Q: any) =>
               Q.struct.generator.atomGroups({
@@ -607,7 +588,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             data
           );
         } else if (currentSelection.residueNumber && currentSelection.chainId) {
-          // Handle single residue selection
           sel = Script.getStructureSelection(
             (Q: any) =>
               Q.struct.generator.atomGroups({
@@ -627,19 +607,16 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           throw new Error('Invalid selection - missing chain or residue information');
         }
 
-        // Create a new structure with only the selected part
         const selectedStructure = await pluginRef.current.builders.structure.createStructure(
           structure,
           { selection: sel }
         );
 
-        // Create representation for the selected structure only
         await pluginRef.current.builders.structure.representation.addRepresentation(selectedStructure, {
           type: 'cartoon',
           color: 'chain-id'
         });
 
-        // Focus camera on the selected region
         const loci = StructureSelection.toLociWithSourceUnits(sel);
         if (loci.elements && loci.elements.length > 0) {
           await PluginCommands.Camera.Focus(pluginRef.current, { loci });
@@ -654,16 +631,15 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [currentSelection]);
 
-    // Hide only selected (restore full structure) - NEW!
+    // Hide only selected (restore full structure)
     const hideOnlySelected = useCallback(async (): Promise<void> => {
       if (!pluginRef.current || !selectionOnlyModeRef.current) {
-        return; // Not in selection-only mode
+        return;
       }
 
       try {
         console.log('👁️ Restoring full structure view');
 
-        // Remove current representations
         const currentReprs = pluginRef.current.state.data.select(
           StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
         );
@@ -674,7 +650,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           });
         }
 
-        // Get the main structure and recreate full representation
         const structures = pluginRef.current.state.data.select(
           StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure)
         );
@@ -685,7 +660,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           });
         }
 
-        // Reset camera to show full structure
         await PluginCommands.Camera.Reset(pluginRef.current);
 
         selectionOnlyModeRef.current = false;
@@ -698,14 +672,27 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // CRITICAL FIX: Enhanced cleanup function
+    // CRITICAL FIX: Comprehensive cleanup function
     const cleanupPlugin = useCallback(() => {
-      console.log('🧹 Starting plugin cleanup...');
+      console.log('🧹 Starting comprehensive plugin cleanup...');
       
-      // Set mounted to false to prevent any further updates
+      // Clear any pending disposal timeouts
+      if (disposalTimeoutRef.current) {
+        clearTimeout(disposalTimeoutRef.current);
+        disposalTimeoutRef.current = null;
+      }
+      
+      // Set mounted to false immediately
       mountedRef.current = false;
       
-      // Clean up subscriptions first
+      // Remove instance from global registry
+      const instanceId = instanceIdRef.current;
+      if (MOLSTAR_INSTANCES.has(instanceId)) {
+        MOLSTAR_INSTANCES.delete(instanceId);
+        console.log(`✅ Removed instance ${instanceId} from registry`);
+      }
+      
+      // Clean up subscriptions
       if (selectionSubscriptionRef.current) {
         try {
           selectionSubscriptionRef.current.unsubscribe();
@@ -716,29 +703,45 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         }
       }
       
-      // Clean up global molstar reference
-      if ((window as any).molstar) {
+      // Clean up global molstar reference if it's ours
+      if ((window as any).molstar && (window as any).molstar._instanceId === instanceId) {
         (window as any).molstar = null;
         console.log('✅ Global molstar reference cleared');
       }
       
-      // Dispose of plugin
+      // Dispose of plugin with proper error handling
       if (pluginRef.current) {
         try {
+          // Try graceful disposal first
           pluginRef.current.dispose();
-          console.log('✅ Plugin disposed');
+          console.log('✅ Plugin disposed gracefully');
         } catch (error) {
-          console.log('⚠️ Error disposing plugin:', error);
+          console.log('⚠️ Error during plugin disposal:', error);
+          // Force cleanup even if disposal fails
+        } finally {
+          pluginRef.current = null;
         }
-        pluginRef.current = null;
       }
       
-      // Clear container to ensure no React roots remain
+      // Force clear container with multiple attempts
       if (containerRef.current) {
         try {
-          // Clear any existing content completely
+          // Method 1: Clear innerHTML
           containerRef.current.innerHTML = '';
-          console.log('✅ Container cleared');
+          
+          // Method 2: Remove all child nodes
+          while (containerRef.current.firstChild) {
+            containerRef.current.removeChild(containerRef.current.firstChild);
+          }
+          
+          // Method 3: Reset any data attributes
+          Array.from(containerRef.current.attributes).forEach(attr => {
+            if (attr.name.startsWith('data-')) {
+              containerRef.current?.removeAttribute(attr.name);
+            }
+          });
+          
+          console.log('✅ Container completely cleared');
         } catch (error) {
           console.log('⚠️ Error clearing container:', error);
         }
@@ -756,8 +759,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       console.log('✅ Plugin cleanup completed');
     }, []);
 
-    // CRITICAL FIX: Initialize the molstar plugin with proper error handling
+    // CRITICAL FIX: Enhanced initialization with prevention of multiple React roots
     const initializePlugin = useCallback(async () => {
+      const instanceId = instanceIdRef.current;
+      
       // Prevent multiple initializations
       if (!containerRef.current || pluginRef.current || initializingRef.current) {
         console.log('⚠️ Plugin initialization skipped - already initialized or in progress');
@@ -770,19 +775,47 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         return;
       }
 
+      // Check if this instance is already in the registry
+      if (MOLSTAR_INSTANCES.has(instanceId)) {
+        console.log('⚠️ Plugin initialization skipped - instance already exists');
+        return;
+      }
+
       try {
-        console.log('🚀 Starting plugin initialization...');
+        console.log('🚀 Starting plugin initialization for instance:', instanceId);
         initializingRef.current = true;
         setIsLoading(true);
         
-        // Clear container completely before initializing
+        // Add to registry immediately
+        MOLSTAR_INSTANCES.add(instanceId);
+        
+        // Force clear container to prevent React root conflicts
         if (containerRef.current) {
+          // Clear completely - this is critical for preventing the React root error
           containerRef.current.innerHTML = '';
+          
+          // Remove any React-specific attributes that might cause conflicts
+          Array.from(containerRef.current.attributes).forEach(attr => {
+            if (attr.name.startsWith('data-react') || attr.name.startsWith('data-molstar')) {
+              containerRef.current?.removeAttribute(attr.name);
+            }
+          });
+          
+          // Add a small delay to ensure DOM is completely clear
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        
+        // Check mount status after delay
+        if (!mountedRef.current) {
+          console.log('⚠️ Component unmounted during initialization delay');
+          MOLSTAR_INSTANCES.delete(instanceId);
+          return;
         }
         
         const spec = createSpec();
         console.log('✅ Plugin spec created');
         
+        // Create plugin with enhanced error handling
         const plugin = await createPluginUI({
           target: containerRef.current,
           render: renderReact18,
@@ -791,18 +824,24 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
         // Check if component is still mounted after async operation
         if (!mountedRef.current) {
-          console.log('⚠️ Component unmounted during initialization - cleaning up');
-          plugin.dispose();
+          console.log('⚠️ Component unmounted during plugin creation - cleaning up');
+          try {
+            plugin.dispose();
+          } catch (e) {
+            console.log('⚠️ Error disposing plugin during unmount cleanup');
+          }
+          MOLSTAR_INSTANCES.delete(instanceId);
           return;
         }
         
         pluginRef.current = plugin;
         
-        // Make molstar globally accessible (critical for your working approach)
+        // Make molstar globally accessible with instance tracking
         (window as any).molstar = plugin;
+        (window as any).molstar._instanceId = instanceId;
         console.log('✅ Molstar plugin initialized and made globally accessible');
         
-        // Setup selection monitoring - CRITICAL FOR MANUAL SELECTION CAPTURE
+        // Setup selection monitoring
         setupSelectionMonitoring(plugin);
         
         setIsInitialized(true);
@@ -811,9 +850,8 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         
       } catch (error) {
         console.error('❌ Failed to initialize molstar plugin:', error);
+        MOLSTAR_INSTANCES.delete(instanceId);
         onError?.(error as Error);
-        
-        // Reset initialization state on error
         initializingRef.current = false;
         setIsInitialized(false);
       } finally {
@@ -824,7 +862,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
     // Load structure from URL
     const loadStructure = useCallback(async (url: string, format: string = 'pdb') => {
-      if (!pluginRef.current) return;
+      if (!pluginRef.current || !mountedRef.current) return;
 
       try {
         setIsLoading(true);
@@ -867,13 +905,9 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     // Clear selection
     const clearSelection = useCallback(async (): Promise<void> => {
       try {
-        // Clear both selections and highlights using global molstar access
         (window as any).molstar?.managers.interactivity.lociSelects.clear();
         (window as any).molstar?.managers.interactivity.lociHighlights.clear();
-        
-        // Clear current selection state
         updateSelectionState(null);
-        
         console.log('✅ Selection cleared');
       } catch (error) {
         console.error('❌ Failed to clear selection:', error);
@@ -904,17 +938,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        // Remove existing representations
         const reprs = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
         for (const repr of reprs) {
           await PluginCommands.State.RemoveObject(pluginRef.current, { state: pluginRef.current.state.data, ref: repr.transform.ref });
         }
 
-        // Get the structure
         const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) return;
 
-        // Create new representation
         const reprType = type === 'ball-and-stick' ? 'ball-and-stick' : 
                         type === 'spacefill' ? 'spacefill' : 
                         type === 'surface' ? 'molecular-surface' : 'cartoon';
@@ -935,7 +966,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        // First check if water representation already exists
         if (waterRepresentationRef.current) {
           throw new Error('Water molecules are already visible');
         }
@@ -943,7 +973,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
         if (structures.length === 0) throw new Error('No structure loaded');
 
-        // Create water representation with water selection
         const waterRepr = await pluginRef.current.builders.structure.representation.addRepresentation(structures[0], {
           type: 'ball-and-stick',
           typeParams: {
@@ -959,7 +988,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           tag: 'water-representation'
         });
 
-        // Store reference to the water representation
         if (waterRepr && waterRepr.ref) {
           waterRepresentationRef.current = waterRepr.ref;
         }
@@ -975,7 +1003,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       if (!pluginRef.current) return;
 
       try {
-        // Method 1: If we have a stored reference, use it
         if (waterRepresentationRef.current) {
           await PluginCommands.State.RemoveObject(pluginRef.current, {
             state: pluginRef.current.state.data,
@@ -985,7 +1012,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return;
         }
 
-        // Method 2: Find and remove representations with water tag
         const representations = pluginRef.current.state.data.select(
           StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D)
         );
@@ -1031,7 +1057,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // Get selection information - Enhanced implementation
+    // Get selection information
     const getSelectionInfo = useCallback(async (): Promise<string> => {
       try {
         if (!currentSelection) {
@@ -1107,14 +1133,12 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return 'No structure loaded.';
         }
 
-        // Try to get basic structure information
         const structure = structures[0];
         if (structure && structure.obj && structure.obj.data) {
           const data = structure.obj.data;
           
           let info = 'Structure Information:\n\n';
           
-          // Get basic stats
           if (data.atomicHierarchy) {
             const hierarchy = data.atomicHierarchy;
             info += `• Total atoms: ${hierarchy.atoms._rowCount || 'Unknown'}\n`;
@@ -1122,7 +1146,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
             info += `• Total chains: ${hierarchy.chains._rowCount || 'Unknown'}\n`;
           }
           
-          // Get model information
           if (data.models && data.models.length > 0) {
             info += `• Models: ${data.models.length}\n`;
           }
@@ -1169,18 +1192,30 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       selectResidueRange, clearSelection, selectResidue
     ]);
 
-    // CRITICAL FIX: Initialize plugin on mount with proper cleanup
+    // CRITICAL FIX: Enhanced mount and unmount handling
     useEffect(() => {
       // Set mounted flag
       mountedRef.current = true;
       console.log('🎯 Component mounting - initializing plugin');
       
-      initializePlugin();
+      // Delay initialization slightly to ensure DOM is ready
+      const initTimeout = setTimeout(() => {
+        if (mountedRef.current) {
+          initializePlugin();
+        }
+      }, 100);
 
       // Cleanup function
       return () => {
         console.log('🎯 Component unmounting - starting cleanup');
-        cleanupPlugin();
+        
+        // Clear initialization timeout if still pending
+        clearTimeout(initTimeout);
+        
+        // Schedule cleanup with a small delay to ensure all async operations complete
+        disposalTimeoutRef.current = setTimeout(() => {
+          cleanupPlugin();
+        }, 50);
       };
     }, [initializePlugin, cleanupPlugin]);
 
@@ -1190,6 +1225,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           ref={containerRef} 
           className="w-full h-full rounded-lg overflow-hidden"
           style={{ minHeight: '400px' }}
+          data-molstar-container={instanceIdRef.current}
         />
         
         {/* Loading overlay */}
