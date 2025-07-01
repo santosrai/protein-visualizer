@@ -110,7 +110,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       console.log(`${emoji} ${logMessage}`);
     }, []);
 
-    // FIXED: Simplified MolScript readiness check
+    // FIXED: Enhanced MolScript readiness check with granular atom property validation
     const isMolScriptReady = useCallback((): boolean => {
       try {
         // Check if plugin is initialized and has a structure
@@ -131,6 +131,48 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return false;
         }
 
+        // CRITICAL: Check if atomProperty is available
+        if (!MS.struct.atomProperty) {
+          debugLog('MolScript not ready: MS.struct.atomProperty not available', 'warning');
+          return false;
+        }
+
+        // CRITICAL: Check if residue properties are available
+        if (!MS.struct.atomProperty.residue) {
+          debugLog('MolScript not ready: MS.struct.atomProperty.residue not available', 'warning');
+          return false;
+        }
+
+        // CRITICAL: Check if specific residue properties are available
+        if (!MS.struct.atomProperty.residue.label_seq_id) {
+          debugLog('MolScript not ready: MS.struct.atomProperty.residue.label_seq_id not available', 'warning');
+          return false;
+        }
+
+        // CRITICAL: Check if chain properties are available
+        if (!MS.struct.atomProperty.chain) {
+          debugLog('MolScript not ready: MS.struct.atomProperty.chain not available', 'warning');
+          return false;
+        }
+
+        // CRITICAL: Check if specific chain properties are available
+        if (!MS.struct.atomProperty.chain.label_asym_id) {
+          debugLog('MolScript not ready: MS.struct.atomProperty.chain.label_asym_id not available', 'warning');
+          return false;
+        }
+
+        // Check if generator functions are available
+        if (!MS.struct.generator || !MS.struct.generator.atomGroups) {
+          debugLog('MolScript not ready: MS.struct.generator.atomGroups not available', 'warning');
+          return false;
+        }
+
+        // Check if core functions are available
+        if (!MS.core || !MS.core.rel || !MS.core.rel.eq || !MS.core.rel.gr || !MS.core.rel.le || !MS.core.rel.and) {
+          debugLog('MolScript not ready: MS.core.rel functions not available', 'warning');
+          return false;
+        }
+
         // Check if the current structure is available
         const structure = getCurrentStructure();
         if (!structure) {
@@ -138,7 +180,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return false;
         }
 
-        debugLog('MolScript is ready!', 'info');
+        // Additional validation: try to access structure units
+        if (!structure.units || structure.units.length === 0) {
+          debugLog('MolScript not ready: Structure has no units', 'warning');
+          return false;
+        }
+
+        debugLog('MolScript is fully ready with all atom properties!', 'info');
         return true;
       } catch (error) {
         debugLog(`Error checking MolScript readiness: ${error}`, 'error');
