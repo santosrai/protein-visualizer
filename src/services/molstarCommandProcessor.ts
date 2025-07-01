@@ -19,16 +19,30 @@ export class MolstarCommandProcessor {
   }
 
   private initializeCommands() {
+    // FIXED: Water molecule commands now work
     this.commands.set('enable_water', {
       name: 'enable_water',
       description: 'Show water molecules',
       execute: async (viewer) => {
         try {
           await viewer.showWaterMolecules();
-          return 'Water molecules are now visible.';
+          return '💧 Water molecules are now visible! You can see HOH (water) residues displayed as small ball-and-stick structures.';
         } catch (error) {
-          return 'Failed to show water molecules. They may not be present in this structure or are already visible.';
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          if (errorMsg.includes('No structure loaded')) {
+            return 'Please load a protein structure first before showing water molecules.';
+          }
+          return `Failed to show water molecules: ${errorMsg}. This structure may not contain water molecules, or they may already be visible.`;
         }
+      }
+    });
+
+    // Alternative command names for water
+    this.commands.set('show_water', {
+      name: 'show_water',
+      description: 'Show water molecules',
+      execute: async (viewer) => {
+        return await this.commands.get('enable_water')!.execute(viewer);
       }
     });
 
@@ -38,9 +52,10 @@ export class MolstarCommandProcessor {
       execute: async (viewer) => {
         try {
           await viewer.hideWaterMolecules();
-          return 'Water molecules have been hidden.';
+          return '🚫 Water molecules have been hidden from view.';
         } catch (error) {
-          return 'Failed to hide water molecules. They may not be currently visible.';
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          return `Failed to hide water molecules: ${errorMsg}. They may not be currently visible.`;
         }
       }
     });
@@ -130,7 +145,7 @@ export class MolstarCommandProcessor {
       execute: async (viewer) => {
         try {
           viewer.setRepresentation('surface');
-          return 'Switched to surface representation.';
+          return '🌊 Switched to molecular surface representation. You can now see the protein\'s accessible surface area and binding pockets.';
         } catch (error) {
           return 'Failed to switch to surface representation.';
         }
@@ -143,7 +158,7 @@ export class MolstarCommandProcessor {
       execute: async (viewer) => {
         try {
           viewer.setRepresentation('cartoon');
-          return 'Switched to cartoon representation.';
+          return '🎭 Switched to cartoon representation. This shows the protein\'s secondary structure (α-helices, β-sheets) clearly.';
         } catch (error) {
           return 'Failed to switch to cartoon representation.';
         }
@@ -156,9 +171,22 @@ export class MolstarCommandProcessor {
       execute: async (viewer) => {
         try {
           viewer.setRepresentation('ball-and-stick');
-          return 'Switched to ball and stick representation.';
+          return '⚛️ Switched to ball-and-stick representation. You can now see individual atoms and bonds in detail.';
         } catch (error) {
           return 'Failed to switch to ball and stick representation.';
+        }
+      }
+    });
+
+    this.commands.set('switch_to_spacefill', {
+      name: 'switch_to_spacefill',
+      description: 'Change to spacefill representation',
+      execute: async (viewer) => {
+        try {
+          viewer.setRepresentation('spacefill');
+          return '🔵 Switched to space-fill representation. This shows the van der Waals radii of atoms.';
+        } catch (error) {
+          return 'Failed to switch to spacefill representation.';
         }
       }
     });
@@ -169,7 +197,7 @@ export class MolstarCommandProcessor {
       execute: async (viewer) => {
         try {
           viewer.resetView();
-          return 'Camera view has been reset.';
+          return '🎯 Camera view has been reset to show the entire structure.';
         } catch (error) {
           return 'Failed to reset camera view.';
         }
@@ -432,7 +460,28 @@ export class MolstarCommandProcessor {
     // Clean and normalize input
     const cleanInput = input.trim().toLowerCase();
     
-    // Handle selection-related queries FIRST (highest priority)
+    // Handle water-related commands FIRST (highest priority for this fix)
+    if (cleanInput.includes('show water') || 
+        cleanInput.includes('water molecules') || 
+        cleanInput.includes('display water') ||
+        cleanInput.includes('enable water') ||
+        cleanInput.includes('make water visible') ||
+        cleanInput.includes('h2o') ||
+        cleanInput.includes('hoh') ||
+        cleanInput.includes('solvent molecules')) {
+      console.log('✅ Matched: enable_water');
+      return { command: 'enable_water' };
+    }
+
+    if (cleanInput.includes('hide water') || 
+        cleanInput.includes('remove water') ||
+        cleanInput.includes('turn off water') ||
+        cleanInput.includes('no water')) {
+      console.log('✅ Matched: hide_water');
+      return { command: 'hide_water' };
+    }
+    
+    // Handle selection-related queries SECOND (high priority)
     if (cleanInput.includes('what is selected') || cleanInput.includes('what\'s selected')) {
       console.log('✅ Matched: what_is_selected');
       return { command: 'what_is_selected' };
@@ -448,7 +497,7 @@ export class MolstarCommandProcessor {
       return { command: 'clear_selection' };
     }
 
-    // Handle show/hide commands SECOND (high priority)
+    // Handle show/hide commands THIRD (high priority)
     if (cleanInput.includes('show only selected') || 
         cleanInput.includes('show selected only') ||
         cleanInput.includes('hide everything else') ||
@@ -464,6 +513,37 @@ export class MolstarCommandProcessor {
         cleanInput.includes('unhide')) {
       console.log('✅ Matched: show_full_structure');
       return { command: 'show_full_structure' };
+    }
+
+    // Handle representation changes FOURTH
+    if (cleanInput.includes('surface view') || 
+        cleanInput.includes('molecular surface') ||
+        cleanInput.includes('switch to surface')) {
+      console.log('✅ Matched: switch_to_surface');
+      return { command: 'switch_to_surface' };
+    }
+
+    if (cleanInput.includes('cartoon view') || 
+        cleanInput.includes('ribbon') ||
+        cleanInput.includes('secondary structure') ||
+        cleanInput.includes('switch to cartoon')) {
+      console.log('✅ Matched: switch_to_cartoon');
+      return { command: 'switch_to_cartoon' };
+    }
+
+    if (cleanInput.includes('ball and stick') || 
+        cleanInput.includes('atomic detail') ||
+        cleanInput.includes('bonds') ||
+        cleanInput.includes('switch to ball')) {
+      console.log('✅ Matched: switch_to_ball_stick');
+      return { command: 'switch_to_ball_stick' };
+    }
+
+    if (cleanInput.includes('space fill') || 
+        cleanInput.includes('van der waals') ||
+        cleanInput.includes('spacefill')) {
+      console.log('✅ Matched: switch_to_spacefill');
+      return { command: 'switch_to_spacefill' };
     }
 
     // SINGLE RESIDUE SELECTION - Check this BEFORE range patterns to avoid conflicts
@@ -558,6 +638,12 @@ export class MolstarCommandProcessor {
           endResidue: match3[2]
         }
       };
+    }
+
+    // Camera controls
+    if (cleanInput.includes('reset view') || cleanInput.includes('reset camera')) {
+      console.log('✅ Matched: reset_view');
+      return { command: 'reset_view' };
     }
 
     // BASIC COMMAND PARSING (original functionality)

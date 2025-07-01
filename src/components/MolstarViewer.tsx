@@ -790,6 +790,89 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
+    // IMPLEMENTED: Show water molecules
+    const showWaterMolecules = useCallback(async (): Promise<void> => {
+      debugLog('Showing water molecules');
+      
+      if (!pluginRef.current) {
+        throw new Error('Plugin not initialized');
+      }
+
+      try {
+        const structures = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure));
+        if (structures.length === 0) {
+          throw new Error('No structure loaded');
+        }
+
+        const structure = structures[0];
+        
+        // Build query for water molecules (HOH is the standard PDB code for water)
+        const waterQuery = MS.struct.generator.atomGroups({
+          'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_comp_id(), 'HOH'])
+        });
+
+        // Create water representation
+        const waterRepr = await pluginRef.current.builders.structure.representation.addRepresentation(structure, {
+          type: 'ball-and-stick',
+          color: 'element-symbol',
+          sizeTheme: { name: 'physical', params: { scale: 0.33 } }
+        }, {
+          tag: 'water-molecules'
+        });
+
+        // Apply the water query to show only water molecules in this representation
+        const selectionQuery = StructureSelectionQuery('water-molecules', waterQuery);
+        await PluginCommands.Structure.RemoveSelection(pluginRef.current, { 
+          structure: structure.transform.ref,
+          query: MS.struct.generator.all()
+        });
+        
+        // Store reference for later hiding
+        waterRepresentationRef.current = waterRepr.transform.ref;
+        
+        debugLog('✅ Water molecules are now visible');
+        
+      } catch (error) {
+        const errorMessage = `Failed to show water molecules: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        debugLog(errorMessage, 'error');
+        throw new Error(errorMessage);
+      }
+    }, [debugLog]);
+
+    // IMPLEMENTED: Hide water molecules
+    const hideWaterMolecules = useCallback(async (): Promise<void> => {
+      debugLog('Hiding water molecules');
+      
+      if (!pluginRef.current) {
+        throw new Error('Plugin not initialized');
+      }
+
+      try {
+        // Find and remove water representations
+        const representations = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
+        
+        for (const repr of representations) {
+          // Check if this is a water representation by checking its tag or properties
+          if (repr.transform.tags?.includes('water-molecules') || waterRepresentationRef.current === repr.transform.ref) {
+            await PluginCommands.State.RemoveObject(pluginRef.current, { 
+              state: pluginRef.current.state.data, 
+              ref: repr.transform.ref 
+            });
+          }
+        }
+        
+        // Clear the reference
+        waterRepresentationRef.current = null;
+        
+        debugLog('✅ Water molecules have been hidden');
+        
+      } catch (error) {
+        const errorMessage = `Failed to hide water molecules: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        debugLog(errorMessage, 'error');
+        throw new Error(errorMessage);
+      }
+    }, [debugLog]);
+
     // Cleanup function
     const cleanup = useCallback(() => {
       debugLog('Starting cleanup');
@@ -844,8 +927,6 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     }, [debugLog]);
 
     // Placeholder implementations for remaining methods
-    const showWaterMolecules = useCallback(async () => { throw new Error('Not implemented'); }, []);
-    const hideWaterMolecules = useCallback(async () => { throw new Error('Not implemented'); }, []);
     const hideLigands = useCallback(async () => { throw new Error('Not implemented'); }, []);
     const focusOnChain = useCallback(async (chainId: string) => { throw new Error('Not implemented'); }, []);
     const getSelectionInfo = useCallback(async (): Promise<string> => { return 'Not implemented'; }, []);
