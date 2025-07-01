@@ -11,8 +11,7 @@ import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
 import { StructureElement, StructureProperties } from 'molstar/lib/mol-model/structure';
 import { MolScriptBuilder as MS } from 'molstar/lib/mol-script/language/builder';
-import { StructureSelection } from 'molstar/lib/mol-model/structure/query';
-import { compile } from 'molstar/lib/mol-script/runtime/query/compiler';
+import { StructureSelectionQuery } from 'molstar/lib/mol-plugin-state/helpers/structure-selection-query';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -126,16 +125,17 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           return false;
         }
 
-        // SIMPLIFIED: Only check the essential MolScript properties that are actually used
+        // IMPROVED: Check if the proper macromolecular properties are available
         try {
           // Test if the exact properties we use in selection are available
-          const testResidue = MS.struct.atomProperty.residue.label_seq_id;
-          const testChain = MS.struct.atomProperty.chain.label_asym_id;
+          const testResidue = MS.struct.atomProperty.macromolecular.label_seq_id();
+          const testChain = MS.struct.atomProperty.macromolecular.auth_asym_id();
           const testGenerator = MS.struct.generator.atomGroups;
           const testRel = MS.core.rel.eq;
+          const testInRange = MS.core.rel.inRange;
 
           // If we can access these without errors, MolScript is ready
-          if (testResidue && testChain && testGenerator && testRel) {
+          if (testResidue && testChain && testGenerator && testRel && testInRange) {
             debugLog('MolScript is ready!', 'info');
             return true;
           }
@@ -566,7 +566,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
-    // FIXED: Implement selectResidue method - simplified and more robust
+    // IMPROVED: Implement selectResidue method using StructureSelectionQuery
     const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
       debugLog(`Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
       
@@ -580,43 +580,36 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // Build the selection query using MolScript properties
+        // Build the selection query using the proper method
         let query;
         if (chainId) {
           // Select specific residue in specific chain
           query = MS.struct.generator.atomGroups({
-            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.residue.label_seq_id(), residueId]),
-            'chain-test': MS.core.rel.eq([MS.struct.atomProperty.chain.label_asym_id(), chainId])
+            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_seq_id(), residueId]),
+            'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.auth_asym_id(), chainId])
           });
         } else {
           // Select residue in any chain
           query = MS.struct.generator.atomGroups({
-            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.residue.label_seq_id(), residueId])
+            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_seq_id(), residueId])
           });
         }
 
-        // Execute the selection using correct Molstar API
-        const compiled = compile(query);
-        const result = compiled(structure);
-        
-        // Check if selection is empty
-        if (!result || (result.elements && result.elements.length === 0)) {
-          const message = `Residue ${residueId}${chainId ? ` in chain ${chainId}` : ''} not found in the structure`;
-          debugLog(message, 'warning');
-          return message;
-        }
+        // Create a StructureSelectionQuery
+        const selectionQuery = StructureSelectionQuery(`residue_${residueId}${chainId ? `_chain_${chainId}` : ''}`, query);
 
-        const selection = StructureSelection.toLociWithSourceUnits(result);
-
-        // Apply the selection
-        await pluginRef.current.managers.structure.selection.fromLoci('add', selection);
+        // Apply the selection using fromSelectionQuery
+        await pluginRef.current.managers.structure.selection.fromSelectionQuery('set', selectionQuery);
 
         // Focus on the selection
-        await PluginCommands.Camera.Focus(pluginRef.current, { 
-          loci: selection,
-          minRadius: 5,
-          extraRadius: 0
-        });
+        const selectionLoci = pluginRef.current.managers.structure.selection.getLoci();
+        if (selectionLoci && selectionLoci.length > 0) {
+          await PluginCommands.Camera.Focus(pluginRef.current, { 
+            loci: selectionLoci[0],
+            minRadius: 5,
+            extraRadius: 0
+          });
+        }
 
         const message = `Selected residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`;
         debugLog(message);
@@ -629,7 +622,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog, getCurrentStructure]);
 
-    // FIXED: Implement selectResidueRange method - simplified and more robust
+    // IMPROVED: Implement selectResidueRange method using StructureSelectionQuery
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
       debugLog(`Selecting residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`);
       
@@ -643,37 +636,30 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // Build the selection query for residue range using MolScript properties
+        // Build the selection query for residue range using the proper method
         const rangeQuery = MS.struct.generator.atomGroups({
-          'residue-test': MS.core.rel.and([
-            MS.core.rel.gr([MS.struct.atomProperty.residue.label_seq_id(), query.startResidue - 1]),
-            MS.core.rel.le([MS.struct.atomProperty.residue.label_seq_id(), query.endResidue])
-          ]),
-          'chain-test': MS.core.rel.eq([MS.struct.atomProperty.chain.label_asym_id(), query.chainId])
+          'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.auth_asym_id(), query.chainId]),
+          'residue-test': MS.core.rel.inRange([MS.struct.atomProperty.macromolecular.label_seq_id(), query.startResidue, query.endResidue])
         });
 
-        // Execute the selection using correct Molstar API
-        const compiled = compile(rangeQuery);
-        const result = compiled(structure);
-        
-        // Check if selection is empty
-        if (!result || (result.elements && result.elements.length === 0)) {
-          const message = `Residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId} not found in the structure`;
-          debugLog(message, 'warning');
-          return message;
-        }
+        // Create a StructureSelectionQuery
+        const selectionQuery = StructureSelectionQuery(
+          `residue_range_${query.startResidue}_${query.endResidue}_in_${query.chainId}`, 
+          rangeQuery
+        );
 
-        const selection = StructureSelection.toLociWithSourceUnits(result);
-
-        // Apply the selection
-        await pluginRef.current.managers.structure.selection.fromLoci('add', selection);
+        // Apply the selection using fromSelectionQuery
+        await pluginRef.current.managers.structure.selection.fromSelectionQuery('set', selectionQuery);
 
         // Focus on the selection
-        await PluginCommands.Camera.Focus(pluginRef.current, { 
-          loci: selection,
-          minRadius: 10,
-          extraRadius: 5
-        });
+        const selectionLoci = pluginRef.current.managers.structure.selection.getLoci();
+        if (selectionLoci && selectionLoci.length > 0) {
+          await PluginCommands.Camera.Focus(pluginRef.current, { 
+            loci: selectionLoci[0],
+            minRadius: 10,
+            extraRadius: 5
+          });
+        }
 
         const message = `Selected residues ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`;
         debugLog(message);
