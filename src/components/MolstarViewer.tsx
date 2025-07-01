@@ -11,7 +11,8 @@ import { Asset } from 'molstar/lib/mol-util/assets';
 import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
 import { StructureElement, StructureProperties } from 'molstar/lib/mol-model/structure';
 import { MolScriptBuilder as MS } from 'molstar/lib/mol-script/language/builder';
-import { StructureSelection, QueryContext } from 'molstar/lib/mol-model/structure/query';
+import { StructureSelection } from 'molstar/lib/mol-model/structure/query';
+import { Script } from 'molstar/lib/mol-script/script';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -522,7 +523,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
-    // Implement selectResidue method
+    // Implement selectResidue method with correct Molstar API
     const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
       debugLog(`Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
       
@@ -551,11 +552,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           });
         }
 
-        // Execute the selection using the correct API
-        const queryResult = QueryContext.queryStructure(structure, query);
-        const selection = StructureSelection.toLociWithSourceUnits(
-          StructureSelection.Singletons(structure, queryResult)
-        );
+        // Execute the selection using Script.getStructureSelection
+        const compiled = Script.compile(query);
+        const result = Script.getStructureSelection(compiled, structure);
+        const selection = StructureSelection.toLociWithSourceUnits(result);
 
         // Apply the selection
         await pluginRef.current.managers.structure.selection.fromLoci('add', selection);
@@ -578,7 +578,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog, getCurrentStructure]);
 
-    // Implement selectResidueRange method
+    // Implement selectResidueRange method with correct Molstar API
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
       debugLog(`Selecting residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`);
       
@@ -601,11 +601,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_asym_id(), query.chainId])
         });
 
-        // Execute the selection using the correct API
-        const queryResult = QueryContext.queryStructure(structure, rangeQuery);
-        const selection = StructureSelection.toLociWithSourceUnits(
-          StructureSelection.Singletons(structure, queryResult)
-        );
+        // Execute the selection using Script.getStructureSelection
+        const compiled = Script.compile(rangeQuery);
+        const result = Script.getStructureSelection(compiled, structure);
+        const selection = StructureSelection.toLociWithSourceUnits(result);
 
         // Apply the selection
         await pluginRef.current.managers.structure.selection.fromLoci('add', selection);
