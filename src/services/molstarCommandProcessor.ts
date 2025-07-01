@@ -224,6 +224,11 @@ export class MolstarCommandProcessor {
         try {
           console.log('🎯 Executing select_residue_range with params:', params);
           
+          // Check if MolScript is ready before proceeding
+          if (!viewer.isMolScriptReady()) {
+            return '⚠️ The 3D viewer is not fully ready for residue selection yet. Please wait a moment and try again, or try loading a different structure if the problem persists.';
+          }
+          
           // More flexible parameter validation
           if (!params) {
             return 'No parameters provided. Please specify chainId, startResidue, and endResidue.';
@@ -274,6 +279,11 @@ export class MolstarCommandProcessor {
       execute: async (viewer, params) => {
         try {
           console.log('🎯 Executing select_residue with params:', params);
+          
+          // Check if MolScript is ready before proceeding
+          if (!viewer.isMolScriptReady()) {
+            return '⚠️ The 3D viewer is not fully ready for residue selection yet. Please wait a moment and try again, or try loading a different structure if the problem persists.';
+          }
           
           if (!params) {
             return 'No parameters provided. Please specify residueId and optionally chainId.';

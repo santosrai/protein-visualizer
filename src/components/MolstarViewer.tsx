@@ -70,6 +70,7 @@ export interface ViewerControls {
   selectResidue: (residueId: number, chainId?: string) => Promise<string>;
   forceRerender: () => Promise<void>;
   validatePluginState: () => boolean;
+  isMolScriptReady: () => boolean;
 }
 
 // Global instance tracking to prevent conflicts
@@ -108,6 +109,46 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       const emoji = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : '✅';
       console.log(`${emoji} ${logMessage}`);
     }, []);
+
+    // Check if MolScript properties are properly initialized
+    const isMolScriptReady = useCallback((): boolean => {
+      try {
+        // Check if basic MolScript object exists
+        if (!MS || !MS.struct) {
+          return false;
+        }
+
+        // Check if atomProperty exists
+        if (!MS.struct.atomProperty) {
+          return false;
+        }
+
+        // Check if residue properties exist
+        if (!MS.struct.atomProperty.residue || !MS.struct.atomProperty.residue.label_seq_id) {
+          return false;
+        }
+
+        // Check if chain properties exist
+        if (!MS.struct.atomProperty.chain || !MS.struct.atomProperty.chain.label_asym_id) {
+          return false;
+        }
+
+        // Check if generator functions exist
+        if (!MS.struct.generator || !MS.struct.generator.atomGroups) {
+          return false;
+        }
+
+        // Check if core functions exist
+        if (!MS.core || !MS.core.rel || !MS.core.rel.eq || !MS.core.rel.and || !MS.core.rel.gr || !MS.core.rel.le) {
+          return false;
+        }
+
+        return true;
+      } catch (error) {
+        debugLog(`Error checking MolScript readiness: ${error}`, 'warning');
+        return false;
+      }
+    }, [debugLog]);
 
     // CRITICAL FIX: Wait for DOM to be completely ready
     const waitForDOMReady = useCallback((): Promise<void> => {
@@ -523,7 +564,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
-    // FIXED: Implement selectResidue method with defensive checks
+    // FIXED: Implement selectResidue method - removed defensive checks, they'll be handled externally
     const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
       debugLog(`Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
       
@@ -537,20 +578,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // CRITICAL FIX: Add defensive checks for MolScript properties
-        if (!MS.struct || !MS.struct.atomProperty || !MS.struct.atomProperty.residue) {
-          throw new Error('MolScript properties not properly initialized - residue properties not available');
-        }
-
-        if (!MS.struct.atomProperty.residue.label_seq_id) {
-          throw new Error('MolScript residue label_seq_id property not available');
-        }
-
-        if (chainId && (!MS.struct.atomProperty.chain || !MS.struct.atomProperty.chain.label_asym_id)) {
-          throw new Error('MolScript chain properties not available');
-        }
-
-        // Build the selection query using correct property names
+        // Build the selection query using MolScript properties
         let query;
         if (chainId) {
           // Select specific residue in specific chain
@@ -569,7 +597,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         const compiled = compile(query);
         const result = compiled(structure);
         
-        // CRITICAL FIX: Check if selection is empty
+        // Check if selection is empty
         if (!result || (result.elements && result.elements.length === 0)) {
           const message = `Residue ${residueId}${chainId ? ` in chain ${chainId}` : ''} not found in the structure`;
           debugLog(message, 'warning');
@@ -599,7 +627,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog, getCurrentStructure]);
 
-    // FIXED: Implement selectResidueRange method with defensive checks
+    // FIXED: Implement selectResidueRange method - removed defensive checks, they'll be handled externally
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
       debugLog(`Selecting residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`);
       
@@ -613,20 +641,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // CRITICAL FIX: Add defensive checks for MolScript properties
-        if (!MS.struct || !MS.struct.atomProperty || !MS.struct.atomProperty.residue) {
-          throw new Error('MolScript properties not properly initialized - residue properties not available');
-        }
-
-        if (!MS.struct.atomProperty.residue.label_seq_id) {
-          throw new Error('MolScript residue label_seq_id property not available');
-        }
-
-        if (!MS.struct.atomProperty.chain || !MS.struct.atomProperty.chain.label_asym_id) {
-          throw new Error('MolScript chain properties not available');
-        }
-
-        // Build the selection query for residue range using correct property names
+        // Build the selection query for residue range using MolScript properties
         const rangeQuery = MS.struct.generator.atomGroups({
           'residue-test': MS.core.rel.and([
             MS.core.rel.gr([MS.struct.atomProperty.residue.label_seq_id(), query.startResidue - 1]),
@@ -639,7 +654,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         const compiled = compile(rangeQuery);
         const result = compiled(structure);
         
-        // CRITICAL FIX: Check if selection is empty
+        // Check if selection is empty
         if (!result || (result.elements && result.elements.length === 0)) {
           const message = `Residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId} not found in the structure`;
           debugLog(message, 'warning');
@@ -877,12 +892,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       clearSelection,
       selectResidue,
       forceRerender,
-      validatePluginState
+      validatePluginState,
+      isMolScriptReady
     }), [
       loadStructure, resetView, zoomIn, zoomOut, setRepresentation, getPlugin,
       showWaterMolecules, hideWaterMolecules, hideLigands, focusOnChain, getSelectionInfo,
       showOnlySelected, hideOnlySelected, highlightChain, clearHighlights, getStructureInfo, getCurrentSelection,
-      selectResidueRange, clearSelection, selectResidue, forceRerender, validatePluginState
+      selectResidueRange, clearSelection, selectResidue, forceRerender, validatePluginState, isMolScriptReady
     ]);
 
     // Initialize plugin on mount
