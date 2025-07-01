@@ -17,7 +17,8 @@ import {
   Zap,
   Settings,
   Wifi,
-  WifiOff
+  WifiOff,
+  Clock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { geminiService } from '../services/geminiService';
@@ -27,10 +28,12 @@ import SettingsDialog from './SettingsDialog';
 
 interface ChatMessage {
   id: string;
-  type: 'user' | 'assistant' | 'system';
+  type: 'user' | 'assistant' | 'system' | 'loading';
   content: string;
   timestamp: Date;
   commands?: string[];
+  isWaitingForReady?: boolean;
+  retryCommand?: { command: string; params?: any };
 }
 
 interface ChatInterfaceProps {
@@ -49,6 +52,14 @@ const QUICK_COMMANDS = [
   "Show structure info",
   "What is selected?",
   "Analyze selection"
+];
+
+// Selection commands that need MolScript to be ready
+const SELECTION_COMMANDS = [
+  'select_residue',
+  'select_residue_range',
+  'what_is_selected',
+  'analyze_selection'
 ];
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -71,6 +82,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [hasApiKey, setHasApiKey] = useState(false);
   const [apiKeyStatus, setApiKeyStatus] = useState({ hasKey: false, isValid: false, source: 'none' });
   const [currentSelection, setCurrentSelection] = useState<SelectionInfo | null>(null);
+  const [readinessCheckInterval, setReadinessCheckInterval] = useState<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -118,6 +130,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     return () => clearInterval(interval);
   }, [viewerRef]);
 
+  // Clean up readiness check interval on unmount
+  useEffect(() => {
+    return () => {
+      if (readinessCheckInterval) {
+        clearInterval(readinessCheckInterval);
+      }
+    };
+  }, [readinessCheckInterval]);
+
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -130,6 +151,98 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       timestamp: new Date()
     };
     setMessages(prev => [...prev, newMessage]);
+    return newMessage.id;
+  };
+
+  const updateMessage = (messageId: string, updates: Partial<ChatMessage>) => {
+    setMessages(prev => 
+      prev.map(msg => 
+        msg.id === messageId ? { ...msg, ...updates } : msg
+      )
+    );
+  };
+
+  const removeMessage = (messageId: string) => {
+    setMessages(prev => prev.filter(msg => msg.id !== messageId));
+  };
+
+  // Check if MolScript is ready and retry pending commands
+  const checkMolScriptReadiness = (messageId: string, command: string, params?: any) => {
+    if (!viewerRef.current) {
+      updateMessage(messageId, {
+        type: 'system',
+        content: 'Viewer not available. Please refresh the page.',
+        isWaitingForReady: false
+      });
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      if (viewerRef.current?.isMolScriptReady()) {
+        clearInterval(interval);
+        
+        try {
+          // Execute the command now that MolScript is ready
+          const result = await molstarCommandProcessor.executeCommand(command, params);
+          
+          // Check if selection was successful and get selection info
+          if ((command === 'select_residue' || command === 'select_residue_range') && 
+              !result.includes('❌') && !result.includes('not found')) {
+            
+            // Get current selection info after successful selection
+            const selection = viewerRef.current?.getCurrentSelection();
+            let finalResult = result;
+            
+            if (selection) {
+              finalResult += `\n\n**Selection Details:**\n${selection.description}`;
+              
+              if (selection.residueName) {
+                finalResult += `\n- Residue: ${selection.residueName} ${selection.residueNumber}`;
+                finalResult += `\n- Chain: ${selection.chainId}`;
+              }
+              
+              if (selection.coordinates) {
+                finalResult += `\n- Position: (${selection.coordinates.x.toFixed(2)}, ${selection.coordinates.y.toFixed(2)}, ${selection.coordinates.z.toFixed(2)}) Å`;
+              }
+            }
+            
+            updateMessage(messageId, {
+              type: 'assistant',
+              content: finalResult,
+              isWaitingForReady: false,
+              commands: [command]
+            });
+          } else {
+            // Command failed or is not a selection command
+            updateMessage(messageId, {
+              type: result.includes('❌') ? 'system' : 'assistant',
+              content: result,
+              isWaitingForReady: false,
+              commands: result.includes('❌') ? undefined : [command]
+            });
+          }
+        } catch (error) {
+          updateMessage(messageId, {
+            type: 'system',
+            content: `Failed to execute command: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            isWaitingForReady: false
+          });
+        }
+      }
+    }, 500); // Check every 500ms
+
+    // Set timeout to avoid infinite waiting
+    setTimeout(() => {
+      clearInterval(interval);
+      const currentMsg = messages.find(m => m.id === messageId);
+      if (currentMsg?.isWaitingForReady) {
+        updateMessage(messageId, {
+          type: 'system',
+          content: 'Timeout waiting for 3D viewer to become ready. Please try again or reload the structure.',
+          isWaitingForReady: false
+        });
+      }
+    }, 15000); // 15 second timeout
   };
 
   const handleApiKeyUpdate = (hasKey: boolean) => {
@@ -162,16 +275,76 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       const directCommand = molstarCommandProcessor.parseCommand(message.toLowerCase());
       
       if (directCommand) {
-        // Execute direct command
+        // Check if this is a selection command that requires MolScript to be ready
+        if (SELECTION_COMMANDS.includes(directCommand.command)) {
+          if (!viewerRef.current) {
+            addMessage({
+              type: 'system',
+              content: 'Viewer not available. Please refresh the page.'
+            });
+            setIsLoading(false);
+            return;
+          }
+
+          // Check if MolScript is ready
+          if (!viewerRef.current.isMolScriptReady()) {
+            // Add loading message
+            const loadingMessageId = addMessage({
+              type: 'loading',
+              content: 'Preparing 3D viewer for residue selection...',
+              isWaitingForReady: true,
+              retryCommand: directCommand
+            });
+            
+            // Start checking for readiness
+            checkMolScriptReadiness(loadingMessageId, directCommand.command, directCommand.params);
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        // Execute direct command immediately if MolScript is ready or not needed
         const result = await molstarCommandProcessor.executeCommand(
           directCommand.command, 
           directCommand.params
         );
         
+        // For successful selection commands, add selection details
+        if ((directCommand.command === 'select_residue' || directCommand.command === 'select_residue_range') && 
+            !result.includes('❌') && !result.includes('not found')) {
+          
+          setTimeout(() => {
+            const selection = viewerRef.current?.getCurrentSelection();
+            if (selection) {
+              let finalResult = result;
+              finalResult += `\n\n**Selection Details:**\n${selection.description}`;
+              
+              if (selection.residueName) {
+                finalResult += `\n- Residue: ${selection.residueName} ${selection.residueNumber}`;
+                finalResult += `\n- Chain: ${selection.chainId}`;
+              }
+              
+              if (selection.coordinates) {
+                finalResult += `\n- Position: (${selection.coordinates.x.toFixed(2)}, ${selection.coordinates.y.toFixed(2)}, ${selection.coordinates.z.toFixed(2)}) Å`;
+              }
+              
+              // Update the last message with detailed info
+              setMessages(prev => {
+                const updated = [...prev];
+                const lastMsg = updated[updated.length - 1];
+                if (lastMsg && lastMsg.commands?.includes(directCommand.command)) {
+                  lastMsg.content = finalResult;
+                }
+                return updated;
+              });
+            }
+          }, 200); // Small delay to ensure selection is processed
+        }
+        
         addMessage({
-          type: 'assistant',
+          type: result.includes('❌') ? 'system' : 'assistant',
           content: result,
-          commands: [directCommand.command]
+          commands: result.includes('❌') ? undefined : [directCommand.command]
         });
       } else if (hasApiKey && apiKeyStatus.isValid) {
         // Process with AI including selection context
@@ -200,6 +373,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           for (const command of commands) {
             const parsedCommand = molstarCommandProcessor.parseCommand(command);
             if (parsedCommand) {
+              // Check if this requires MolScript readiness
+              if (SELECTION_COMMANDS.includes(parsedCommand.command)) {
+                if (!viewerRef.current?.isMolScriptReady()) {
+                  commandResults.push('⏳ Waiting for 3D viewer to be ready for selection...');
+                  continue;
+                }
+              }
+              
               const result = await molstarCommandProcessor.executeCommand(
                 parsedCommand.command,
                 parsedCommand.params
@@ -401,6 +582,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
                           <Bot className="h-4 w-4 text-white" />
                         </div>
+                      ) : message.type === 'loading' ? (
+                        <div className="w-8 h-8 rounded-full bg-orange-600 flex items-center justify-center">
+                          <Clock className="h-4 w-4 text-white" />
+                        </div>
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">
                           <Lightbulb className="h-4 w-4 text-white" />
@@ -415,10 +600,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       ? "bg-blue-600 text-white" 
                       : message.type === 'assistant'
                       ? "bg-gray-700/50 text-gray-100"
+                      : message.type === 'loading'
+                      ? "bg-orange-500/20 text-orange-200 border border-orange-500/30"
                       : "bg-gray-600/50 text-gray-200"
                   )}>
                     <div className="text-sm whitespace-pre-wrap leading-relaxed">
-                      {message.content}
+                      {message.type === 'loading' && message.isWaitingForReady ? (
+                        <div className="flex items-center space-x-2">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>{message.content}</span>
+                        </div>
+                      ) : (
+                        message.content
+                      )}
                     </div>
                     
                     {message.commands && message.commands.length > 0 && (
