@@ -12,7 +12,7 @@ import { Vec3 } from 'molstar/lib/mol-math/linear-algebra';
 import { StructureElement, StructureProperties } from 'molstar/lib/mol-model/structure';
 import { MolScriptBuilder as MS } from 'molstar/lib/mol-script/language/builder';
 import { StructureSelection } from 'molstar/lib/mol-model/structure/query';
-import { Script } from 'molstar/lib/mol-script/script';
+import { compile } from 'molstar/lib/mol-script/runtime/query/compiler';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Loader2, RotateCcw, Home, ZoomIn, ZoomOut, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -537,24 +537,24 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // Build the selection query
+        // Build the selection query using correct property names
         let query;
         if (chainId) {
           // Select specific residue in specific chain
           query = MS.struct.generator.atomGroups({
-            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_seq_id(), residueId]),
-            'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_asym_id(), chainId])
+            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.residue.label_seq_id(), residueId]),
+            'chain-test': MS.core.rel.eq([MS.struct.atomProperty.chain.label_asym_id(), chainId])
           });
         } else {
           // Select residue in any chain
           query = MS.struct.generator.atomGroups({
-            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_seq_id(), residueId])
+            'residue-test': MS.core.rel.eq([MS.struct.atomProperty.residue.label_seq_id(), residueId])
           });
         }
 
-        // Execute the selection using Script.getStructureSelection
-        const compiled = Script.compile(query);
-        const result = Script.getStructureSelection(compiled, structure);
+        // Execute the selection using correct Molstar API
+        const compiled = compile(query);
+        const result = compiled(structure);
         const selection = StructureSelection.toLociWithSourceUnits(result);
 
         // Apply the selection
@@ -592,18 +592,18 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
-        // Build the selection query for residue range
+        // Build the selection query for residue range using correct property names
         const rangeQuery = MS.struct.generator.atomGroups({
           'residue-test': MS.core.rel.and([
-            MS.core.rel.gr([MS.struct.atomProperty.macromolecular.label_seq_id(), query.startResidue - 1]),
-            MS.core.rel.le([MS.struct.atomProperty.macromolecular.label_seq_id(), query.endResidue])
+            MS.core.rel.gr([MS.struct.atomProperty.residue.label_seq_id(), query.startResidue - 1]),
+            MS.core.rel.le([MS.struct.atomProperty.residue.label_seq_id(), query.endResidue])
           ]),
-          'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_asym_id(), query.chainId])
+          'chain-test': MS.core.rel.eq([MS.struct.atomProperty.chain.label_asym_id(), query.chainId])
         });
 
-        // Execute the selection using Script.getStructureSelection
-        const compiled = Script.compile(rangeQuery);
-        const result = Script.getStructureSelection(compiled, structure);
+        // Execute the selection using correct Molstar API
+        const compiled = compile(rangeQuery);
+        const result = compiled(structure);
         const selection = StructureSelection.toLociWithSourceUnits(result);
 
         // Apply the selection
