@@ -110,84 +110,42 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       console.log(`${emoji} ${logMessage}`);
     }, []);
 
-    // FIXED: Enhanced MolScript readiness check with granular atom property validation
+    // SIMPLIFIED: MolScript readiness check - only validate essential properties
     const isMolScriptReady = useCallback((): boolean => {
       try {
-        // Check if plugin is initialized and has a structure
+        // Basic checks first
         if (!pluginRef.current || !isInitialized || !hasStructure) {
-          debugLog('MolScript not ready: Plugin not initialized or no structure loaded', 'info');
+          debugLog('MolScript not ready: Basic requirements not met', 'info');
           return false;
         }
 
-        // Check if MolScript builder exists
-        if (!MS || typeof MS !== 'object') {
-          debugLog('MolScript not ready: MS builder not available', 'warning');
-          return false;
-        }
-
-        // Check if basic structure properties exist
-        if (!MS.struct) {
-          debugLog('MolScript not ready: MS.struct not available', 'warning');
-          return false;
-        }
-
-        // CRITICAL: Check if atomProperty is available
-        if (!MS.struct.atomProperty) {
-          debugLog('MolScript not ready: MS.struct.atomProperty not available', 'warning');
-          return false;
-        }
-
-        // CRITICAL: Check if residue properties are available
-        if (!MS.struct.atomProperty.residue) {
-          debugLog('MolScript not ready: MS.struct.atomProperty.residue not available', 'warning');
-          return false;
-        }
-
-        // CRITICAL: Check if specific residue properties are available
-        if (!MS.struct.atomProperty.residue.label_seq_id) {
-          debugLog('MolScript not ready: MS.struct.atomProperty.residue.label_seq_id not available', 'warning');
-          return false;
-        }
-
-        // CRITICAL: Check if chain properties are available
-        if (!MS.struct.atomProperty.chain) {
-          debugLog('MolScript not ready: MS.struct.atomProperty.chain not available', 'warning');
-          return false;
-        }
-
-        // CRITICAL: Check if specific chain properties are available
-        if (!MS.struct.atomProperty.chain.label_asym_id) {
-          debugLog('MolScript not ready: MS.struct.atomProperty.chain.label_asym_id not available', 'warning');
-          return false;
-        }
-
-        // Check if generator functions are available
-        if (!MS.struct.generator || !MS.struct.generator.atomGroups) {
-          debugLog('MolScript not ready: MS.struct.generator.atomGroups not available', 'warning');
-          return false;
-        }
-
-        // Check if core functions are available
-        if (!MS.core || !MS.core.rel || !MS.core.rel.eq || !MS.core.rel.gr || !MS.core.rel.le || !MS.core.rel.and) {
-          debugLog('MolScript not ready: MS.core.rel functions not available', 'warning');
-          return false;
-        }
-
-        // Check if the current structure is available
+        // Check if we have a current structure
         const structure = getCurrentStructure();
         if (!structure) {
-          debugLog('MolScript not ready: No current structure', 'warning');
+          debugLog('MolScript not ready: No current structure', 'info');
           return false;
         }
 
-        // Additional validation: try to access structure units
-        if (!structure.units || structure.units.length === 0) {
-          debugLog('MolScript not ready: Structure has no units', 'warning');
+        // SIMPLIFIED: Only check the essential MolScript properties that are actually used
+        try {
+          // Test if the exact properties we use in selection are available
+          const testResidue = MS.struct.atomProperty.residue.label_seq_id;
+          const testChain = MS.struct.atomProperty.chain.label_asym_id;
+          const testGenerator = MS.struct.generator.atomGroups;
+          const testRel = MS.core.rel.eq;
+
+          // If we can access these without errors, MolScript is ready
+          if (testResidue && testChain && testGenerator && testRel) {
+            debugLog('MolScript is ready!', 'info');
+            return true;
+          }
+        } catch (error) {
+          debugLog(`MolScript properties not accessible: ${error}`, 'warning');
           return false;
         }
 
-        debugLog('MolScript is fully ready with all atom properties!', 'info');
-        return true;
+        debugLog('MolScript properties exist but validation failed', 'warning');
+        return false;
       } catch (error) {
         debugLog(`Error checking MolScript readiness: ${error}`, 'error');
         return false;
