@@ -523,7 +523,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
-    // Implement selectResidue method with correct Molstar API
+    // FIXED: Implement selectResidue method with defensive checks
     const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
       debugLog(`Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
       
@@ -537,6 +537,19 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
+        // CRITICAL FIX: Add defensive checks for MolScript properties
+        if (!MS.struct || !MS.struct.atomProperty || !MS.struct.atomProperty.residue) {
+          throw new Error('MolScript properties not properly initialized - residue properties not available');
+        }
+
+        if (!MS.struct.atomProperty.residue.label_seq_id) {
+          throw new Error('MolScript residue label_seq_id property not available');
+        }
+
+        if (chainId && (!MS.struct.atomProperty.chain || !MS.struct.atomProperty.chain.label_asym_id)) {
+          throw new Error('MolScript chain properties not available');
+        }
+
         // Build the selection query using correct property names
         let query;
         if (chainId) {
@@ -555,6 +568,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         // Execute the selection using correct Molstar API
         const compiled = compile(query);
         const result = compiled(structure);
+        
+        // CRITICAL FIX: Check if selection is empty
+        if (!result || (result.elements && result.elements.length === 0)) {
+          const message = `Residue ${residueId}${chainId ? ` in chain ${chainId}` : ''} not found in the structure`;
+          debugLog(message, 'warning');
+          return message;
+        }
+
         const selection = StructureSelection.toLociWithSourceUnits(result);
 
         // Apply the selection
@@ -578,7 +599,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog, getCurrentStructure]);
 
-    // Implement selectResidueRange method with correct Molstar API
+    // FIXED: Implement selectResidueRange method with defensive checks
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
       debugLog(`Selecting residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`);
       
@@ -592,6 +613,19 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
 
       try {
+        // CRITICAL FIX: Add defensive checks for MolScript properties
+        if (!MS.struct || !MS.struct.atomProperty || !MS.struct.atomProperty.residue) {
+          throw new Error('MolScript properties not properly initialized - residue properties not available');
+        }
+
+        if (!MS.struct.atomProperty.residue.label_seq_id) {
+          throw new Error('MolScript residue label_seq_id property not available');
+        }
+
+        if (!MS.struct.atomProperty.chain || !MS.struct.atomProperty.chain.label_asym_id) {
+          throw new Error('MolScript chain properties not available');
+        }
+
         // Build the selection query for residue range using correct property names
         const rangeQuery = MS.struct.generator.atomGroups({
           'residue-test': MS.core.rel.and([
@@ -604,6 +638,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         // Execute the selection using correct Molstar API
         const compiled = compile(rangeQuery);
         const result = compiled(structure);
+        
+        // CRITICAL FIX: Check if selection is empty
+        if (!result || (result.elements && result.elements.length === 0)) {
+          const message = `Residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId} not found in the structure`;
+          debugLog(message, 'warning');
+          return message;
+        }
+
         const selection = StructureSelection.toLociWithSourceUnits(result);
 
         // Apply the selection
