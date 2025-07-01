@@ -18,7 +18,9 @@ import {
   Settings,
   Wifi,
   WifiOff,
-  Clock
+  Clock,
+  CheckCircle,
+  X
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { geminiService } from '../services/geminiService';
@@ -28,12 +30,17 @@ import SettingsDialog from './SettingsDialog';
 
 interface ChatMessage {
   id: string;
-  type: 'user' | 'assistant' | 'system' | 'loading';
+  type: 'user' | 'assistant' | 'system' | 'loading' | 'suggestion';
   content: string;
   timestamp: Date;
   commands?: string[];
   isWaitingForReady?: boolean;
   retryCommand?: { command: string; params?: any };
+  suggestion?: {
+    command: string;
+    parameters: any;
+    description: string;
+  };
 }
 
 interface ChatInterfaceProps {
@@ -73,7 +80,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     {
       id: '1',
       type: 'system',
-      content: 'Welcome! I can help you interact with the 3D protein structure. Try selecting a residue in the viewer and ask me "What is selected?" or "Analyze my selection".',
+      content: 'Welcome! I can help you interact with the 3D protein structure. Try selecting a residue in the viewer and ask me "What is selected?" or say "select residue 45 in chain A" and I\'ll help you.',
       timestamp: new Date()
     }
   ]);
@@ -164,6 +171,62 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const removeMessage = (messageId: string) => {
     setMessages(prev => prev.filter(msg => msg.id !== messageId));
+  };
+
+  // Handle suggestion confirmation
+  const handleSuggestionConfirm = async (suggestion: { command: string; parameters: any; description: string }) => {
+    try {
+      setIsLoading(true);
+      
+      // Add user confirmation message
+      addMessage({
+        type: 'user',
+        content: `Yes, ${suggestion.description.toLowerCase()}`
+      });
+
+      // Check if this requires MolScript readiness
+      if (SELECTION_COMMANDS.includes(suggestion.command)) {
+        if (!viewerRef.current?.isMolScriptReady()) {
+          const loadingMessageId = addMessage({
+            type: 'loading',
+            content: 'Preparing 3D viewer for selection...',
+            isWaitingForReady: true
+          });
+          
+          checkMolScriptReadiness(loadingMessageId, suggestion.command, suggestion.parameters);
+          return;
+        }
+      }
+
+      // Execute the command
+      const result = await molstarCommandProcessor.executeCommand(suggestion.command, suggestion.parameters);
+      
+      addMessage({
+        type: result.includes('❌') ? 'system' : 'assistant',
+        content: result,
+        commands: result.includes('❌') ? undefined : [suggestion.command]
+      });
+
+    } catch (error) {
+      addMessage({
+        type: 'system',
+        content: `Error executing command: ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSuggestionDecline = (suggestion: { command: string; parameters: any; description: string }) => {
+    addMessage({
+      type: 'user',
+      content: 'No, that\'s not what I meant'
+    });
+    
+    addMessage({
+      type: 'assistant',
+      content: 'I understand. Could you please clarify what you\'d like to do? You can be more specific about which residues or chains you want to select.'
+    });
   };
 
   // Check if MolScript is ready and retry pending commands
@@ -365,41 +428,55 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         try {
           const aiResponse = await geminiService.processCommand(message, context);
-          const commands = geminiService.extractCommands(aiResponse);
-          const cleanResponse = geminiService.cleanResponse(aiResponse);
+          
+          // Check for suggestions first
+          const suggestions = geminiService.extractSuggestions(aiResponse);
+          if (suggestions.length > 0) {
+            // Show suggestion with confirmation buttons
+            const cleanResponse = geminiService.cleanResponse(aiResponse);
+            addMessage({
+              type: 'suggestion',
+              content: cleanResponse,
+              suggestion: suggestions[0] // Use first suggestion
+            });
+          } else {
+            // Regular AI response with possible commands
+            const commands = geminiService.extractCommands(aiResponse);
+            const cleanResponse = geminiService.cleanResponse(aiResponse);
 
-          // Execute any commands found in the AI response
-          const commandResults = [];
-          for (const command of commands) {
-            const parsedCommand = molstarCommandProcessor.parseCommand(command);
-            if (parsedCommand) {
-              // Check if this requires MolScript readiness
-              if (SELECTION_COMMANDS.includes(parsedCommand.command)) {
-                if (!viewerRef.current?.isMolScriptReady()) {
-                  commandResults.push('⏳ Waiting for 3D viewer to be ready for selection...');
-                  continue;
+            // Execute any commands found in the AI response
+            const commandResults = [];
+            for (const command of commands) {
+              const parsedCommand = molstarCommandProcessor.parseCommand(command);
+              if (parsedCommand) {
+                // Check if this requires MolScript readiness
+                if (SELECTION_COMMANDS.includes(parsedCommand.command)) {
+                  if (!viewerRef.current?.isMolScriptReady()) {
+                    commandResults.push('⏳ Waiting for 3D viewer to be ready for selection...');
+                    continue;
+                  }
                 }
+                
+                const result = await molstarCommandProcessor.executeCommand(
+                  parsedCommand.command,
+                  parsedCommand.params
+                );
+                commandResults.push(result);
               }
-              
-              const result = await molstarCommandProcessor.executeCommand(
-                parsedCommand.command,
-                parsedCommand.params
-              );
-              commandResults.push(result);
             }
-          }
 
-          // Combine AI response with command results
-          let finalResponse = cleanResponse;
-          if (commandResults.length > 0) {
-            finalResponse += '\n\n' + commandResults.join('\n');
-          }
+            // Combine AI response with command results
+            let finalResponse = cleanResponse;
+            if (commandResults.length > 0) {
+              finalResponse += '\n\n' + commandResults.join('\n');
+            }
 
-          addMessage({
-            type: 'assistant',
-            content: finalResponse,
-            commands: commands
-          });
+            addMessage({
+              type: 'assistant',
+              content: finalResponse,
+              commands: commands
+            });
+          }
         } catch (error) {
           console.error('AI processing error:', error);
           addMessage({
@@ -586,6 +663,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         <div className="w-8 h-8 rounded-full bg-orange-600 flex items-center justify-center">
                           <Clock className="h-4 w-4 text-white" />
                         </div>
+                      ) : message.type === 'suggestion' ? (
+                        <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center">
+                          <Lightbulb className="h-4 w-4 text-white" />
+                        </div>
                       ) : (
                         <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center">
                           <Lightbulb className="h-4 w-4 text-white" />
@@ -602,6 +683,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       ? "bg-gray-700/50 text-gray-100"
                       : message.type === 'loading'
                       ? "bg-orange-500/20 text-orange-200 border border-orange-500/30"
+                      : message.type === 'suggestion'
+                      ? "bg-purple-500/20 text-purple-200 border border-purple-500/30"
                       : "bg-gray-600/50 text-gray-200"
                   )}>
                     <div className="text-sm whitespace-pre-wrap leading-relaxed">
@@ -615,6 +698,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                       )}
                     </div>
                     
+                    {/* Suggestion Confirmation Buttons */}
+                    {message.type === 'suggestion' && message.suggestion && (
+                      <div className="mt-3 flex space-x-2">
+                        <Button
+                          size="sm"
+                          onClick={() => handleSuggestionConfirm(message.suggestion!)}
+                          className="bg-green-600 hover:bg-green-700 text-white"
+                          disabled={isLoading}
+                        >
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Yes, do this
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSuggestionDecline(message.suggestion!)}
+                          className="bg-red-500/20 border-red-500/50 text-red-300 hover:bg-red-500/30"
+                          disabled={isLoading}
+                        >
+                          <X className="h-3 w-3 mr-1" />
+                          No, not this
+                        </Button>
+                      </div>
+                    )}
+
                     {message.commands && message.commands.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {message.commands.map((cmd, index) => (
@@ -673,7 +781,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder={isStructureLoaded ? "Ask me about the protein structure..." : "Load a structure first..."}
+              placeholder={isStructureLoaded ? "Ask me about the protein or say 'select residue 45 in chain A'..." : "Load a structure first..."}
               className="flex-1 bg-gray-900/50 border-gray-600 text-white placeholder-gray-400"
               disabled={isLoading || !isStructureLoaded}
             />

@@ -135,36 +135,51 @@ Current Selection Information:
 ` : 'No current selection.';
 
     const systemPrompt = `You are an AI assistant for a protein visualization tool powered by Molstar. 
-You can help users interact with 3D protein structures through specific commands and provide detailed analysis of selected protein elements.
+You help users interact with 3D protein structures and understand their selection intents.
+
+CRITICAL: When users express intent to select residues or ranges, you should:
+1. Parse their intent carefully
+2. Suggest a specific command with exact parameters
+3. Ask for confirmation using the [SUGGESTION] format
 
 Available commands you can suggest or execute:
-- "enable_water" - Show water molecules
-- "hide_water" - Hide water molecules
-- "hide_ligands" - Hide ligand molecules  
-- "zoom_chain [chain_id]" - Zoom to specific chain (A, B, C, etc.)
-- "show_selection_info" - Get information about current selection
-- "show_only_selected" - Show only the selected region
-- "switch_to_surface" - Change to surface representation
-- "switch_to_cartoon" - Change to cartoon representation
-- "switch_to_ball_stick" - Change to ball and stick representation
-- "reset_view" - Reset camera to default position
-- "highlight_chain [chain_id]" - Highlight specific chain
-- "clear_highlights" - Remove all highlights
-- "show_structure_info" - Display structure information
-- "select_residue_range" - Select residues within a specific range (e.g., "select residues 12-200 in chain A")
-- "clear_selection" - Clear all current selections
+- "select_residue" - Select a single residue by number and chain
+- "select_residue_range" - Select a range of residues in a chain
+- "what_is_selected" - Get information about current selection
+- "analyze_selection" - Detailed analysis of current selection
+- "clear_selection" - Clear all selections
+- "show_only_selected" - Show only selected region
+- "switch_to_surface/cartoon/ball_stick" - Change representation
+- "reset_view" - Reset camera
 
-NEW FEATURE: Residue Range Selection
-You can now help users select specific residue ranges within chains. Examples:
-- "select residues 12-200 in chain A"
-- "select chain A residues 50 to 150"  
-- "show me residues 100-300 from chain B"
+SELECTION INTENT RECOGNITION:
+When users say things like:
+- "select residue 45" → suggest select_residue with residueId=45
+- "select residue 45 in chain A" → suggest select_residue with residueId=45, chainId=A
+- "select residues 10 to 50 in chain B" → suggest select_residue_range with startResidue=10, endResidue=50, chainId=B
+- "show me residues 100-200 from chain A" → suggest select_residue_range
+- "select the loop from 25 to 35" → suggest select_residue_range (ask which chain if not specified)
 
-This is useful for:
-- Analyzing specific protein domains
-- Focusing on regions of interest
-- Comparing similar regions across chains
-- Studying loop regions or secondary structures
+SUGGESTION FORMAT:
+When you detect selection intent, respond with:
+[SUGGESTION: command_name] with parameters: {param1: value1, param2: value2}
+
+For example:
+"I understand you want to select residue 45 in chain A. 
+[SUGGESTION: select_residue] with parameters: {residueId: 45, chainId: "A"}
+Is this what you want to do?"
+
+For range selections:
+"I understand you want to select residues 10-50 in chain B.
+[SUGGESTION: select_residue_range] with parameters: {startResidue: 10, endResidue: 50, chainId: "B"}
+Is this what you want to do?"
+
+IMPORTANT RULES:
+1. Always ask for confirmation when suggesting selection commands
+2. If chain is not specified, ask which chain they want
+3. Parse numbers carefully and validate ranges
+4. Be specific about what will be selected
+5. If the intent is unclear, ask clarifying questions
 
 Current context:
 - Structure: ${context.structureName || 'Unknown'}
@@ -172,17 +187,6 @@ Current context:
 - Has structure loaded: ${context.hasStructure || false}
 
 ${selectionContext}
-
-IMPORTANT: When users ask about "what is selected", "analyze selection", or questions about specific residues/atoms, provide detailed biological and chemical information about the selected element. Include information about:
-- Amino acid properties (hydrophobic, hydrophilic, charged, polar, etc.)
-- Secondary structure context if relevant
-- Functional significance if known
-- Chemical properties of the atom/residue
-
-When users request residue range selections, suggest using the new selection commands like:
-[COMMAND: select_residue_range] with appropriate parameters.
-
-Respond naturally to user queries and suggest appropriate commands. If a user asks something that requires a specific action, include the command in your response using the format: [COMMAND: command_name].
 
 User message: ${message}`;
 
@@ -217,8 +221,60 @@ User message: ${message}`;
     return commands;
   }
 
+  extractSuggestions(text: string): Array<{command: string, parameters: any, description: string}> {
+    const suggestions = [];
+    
+    // Extract suggestions with parameters
+    const suggestionRegex = /\[SUGGESTION:\s*([^\]]+)\]\s*with parameters:\s*\{([^}]+)\}/g;
+    let match;
+    
+    while ((match = suggestionRegex.exec(text)) !== null) {
+      try {
+        const command = match[1].trim();
+        const paramStr = match[2].trim();
+        
+        // Parse parameters (simple JSON-like parsing)
+        const parameters: any = {};
+        const paramPairs = paramStr.split(',');
+        
+        for (const pair of paramPairs) {
+          const [key, value] = pair.split(':').map(s => s.trim());
+          if (key && value) {
+            const cleanKey = key.replace(/['"]/g, '');
+            let cleanValue = value.replace(/['"]/g, '');
+            
+            // Try to parse as number if possible
+            if (!isNaN(Number(cleanValue))) {
+              cleanValue = Number(cleanValue);
+            }
+            
+            parameters[cleanKey] = cleanValue;
+          }
+        }
+        
+        // Extract description (everything before the suggestion)
+        const suggestionIndex = text.indexOf(match[0]);
+        const beforeSuggestion = text.substring(0, suggestionIndex).trim();
+        const description = beforeSuggestion.split('\n').slice(-2).join(' ').trim();
+        
+        suggestions.push({
+          command,
+          parameters,
+          description: description || `Execute ${command} command`
+        });
+      } catch (error) {
+        console.warn('Failed to parse suggestion parameters:', error);
+      }
+    }
+    
+    return suggestions;
+  }
+
   cleanResponse(text: string): string {
-    return text.replace(/\[COMMAND:\s*[^\]]+\]/g, '').trim();
+    return text
+      .replace(/\[COMMAND:\s*[^\]]+\]/g, '')
+      .replace(/\[SUGGESTION:\s*[^\]]+\]\s*with parameters:\s*\{[^}]+\}/g, '')
+      .trim();
   }
 }
 
