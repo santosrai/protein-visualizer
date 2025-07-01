@@ -110,45 +110,41 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       console.log(`${emoji} ${logMessage}`);
     }, []);
 
-    // Check if MolScript properties are properly initialized
+    // FIXED: Simplified MolScript readiness check
     const isMolScriptReady = useCallback((): boolean => {
       try {
-        // Check if basic MolScript object exists
-        if (!MS || !MS.struct) {
+        // Check if plugin is initialized and has a structure
+        if (!pluginRef.current || !isInitialized || !hasStructure) {
+          debugLog('MolScript not ready: Plugin not initialized or no structure loaded', 'info');
           return false;
         }
 
-        // Check if atomProperty exists
-        if (!MS.struct.atomProperty) {
+        // Check if MolScript builder exists
+        if (!MS || typeof MS !== 'object') {
+          debugLog('MolScript not ready: MS builder not available', 'warning');
           return false;
         }
 
-        // Check if residue properties exist
-        if (!MS.struct.atomProperty.residue || !MS.struct.atomProperty.residue.label_seq_id) {
+        // Check if basic structure properties exist
+        if (!MS.struct) {
+          debugLog('MolScript not ready: MS.struct not available', 'warning');
           return false;
         }
 
-        // Check if chain properties exist
-        if (!MS.struct.atomProperty.chain || !MS.struct.atomProperty.chain.label_asym_id) {
+        // Check if the current structure is available
+        const structure = getCurrentStructure();
+        if (!structure) {
+          debugLog('MolScript not ready: No current structure', 'warning');
           return false;
         }
 
-        // Check if generator functions exist
-        if (!MS.struct.generator || !MS.struct.generator.atomGroups) {
-          return false;
-        }
-
-        // Check if core functions exist
-        if (!MS.core || !MS.core.rel || !MS.core.rel.eq || !MS.core.rel.and || !MS.core.rel.gr || !MS.core.rel.le) {
-          return false;
-        }
-
+        debugLog('MolScript is ready!', 'info');
         return true;
       } catch (error) {
-        debugLog(`Error checking MolScript readiness: ${error}`, 'warning');
+        debugLog(`Error checking MolScript readiness: ${error}`, 'error');
         return false;
       }
-    }, [debugLog]);
+    }, [debugLog, isInitialized, hasStructure]);
 
     // CRITICAL FIX: Wait for DOM to be completely ready
     const waitForDOMReady = useCallback((): Promise<void> => {
@@ -564,7 +560,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
-    // FIXED: Implement selectResidue method - removed defensive checks, they'll be handled externally
+    // FIXED: Implement selectResidue method - simplified and more robust
     const selectResidue = useCallback(async (residueId: number, chainId?: string): Promise<string> => {
       debugLog(`Selecting residue ${residueId}${chainId ? ` in chain ${chainId}` : ''}`);
       
@@ -627,7 +623,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog, getCurrentStructure]);
 
-    // FIXED: Implement selectResidueRange method - removed defensive checks, they'll be handled externally
+    // FIXED: Implement selectResidueRange method - simplified and more robust
     const selectResidueRange = useCallback(async (query: ResidueRangeQuery): Promise<string> => {
       debugLog(`Selecting residue range ${query.startResidue}-${query.endResidue} in chain ${query.chainId}`);
       
