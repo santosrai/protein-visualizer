@@ -551,9 +551,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           });
         }
 
-        // Execute the selection
+        // Execute the selection using the correct API
+        const queryResult = QueryContext.queryStructure(structure, query);
         const selection = StructureSelection.toLociWithSourceUnits(
-          StructureSelection.Singletons(structure, StructureSelection.query(query, structure))
+          StructureSelection.Singletons(structure, queryResult)
         );
 
         // Apply the selection
@@ -600,9 +601,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           'chain-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_asym_id(), query.chainId])
         });
 
-        // Execute the selection
+        // Execute the selection using the correct API
+        const queryResult = QueryContext.queryStructure(structure, rangeQuery);
         const selection = StructureSelection.toLociWithSourceUnits(
-          StructureSelection.Singletons(structure, StructureSelection.query(rangeQuery, structure))
+          StructureSelection.Singletons(structure, queryResult)
         );
 
         // Apply the selection
