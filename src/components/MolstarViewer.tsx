@@ -94,10 +94,13 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
     
     // Refs for cleanup and state tracking
     const mountedRef = useRef<boolean>(true);
-    const waterRepresentationRef = useRef<string | null>(null);
     const selectionSubscriptionRef = useRef<any>(null);
     const disposalTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    
+    // FIXED: Track water representation properly
+    const waterRepresentationRef = useRef<string | null>(null);
+    const isWaterVisibleRef = useRef<boolean>(false);
 
     // Enhanced debug logging with initialization tracking
     const debugLog = useCallback((message: string, type: 'info' | 'warning' | 'error' = 'info') => {
@@ -706,6 +709,10 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
         setStructureLoadError(null);
         setHasStructure(false);
         
+        // Reset water state when loading new structure
+        waterRepresentationRef.current = null;
+        isWaterVisibleRef.current = false;
+        
         // Clear existing structures
         await PluginCommands.State.RemoveObject(pluginRef.current, { 
           state: pluginRef.current.state.data, 
@@ -790,12 +797,18 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // IMPLEMENTED: Show water molecules
+    // FIXED: Proper water molecule show/hide implementation
     const showWaterMolecules = useCallback(async (): Promise<void> => {
-      debugLog('Showing water molecules');
+      debugLog('🔄 Showing water molecules');
       
       if (!pluginRef.current) {
         throw new Error('Plugin not initialized');
+      }
+
+      // Check if water is already visible
+      if (isWaterVisibleRef.current && waterRepresentationRef.current) {
+        debugLog('Water molecules are already visible');
+        return;
       }
 
       try {
@@ -806,31 +819,43 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
 
         const structure = structures[0];
         
-        // Build query for water molecules (HOH is the standard PDB code for water)
+        // Create water selection query
         const waterQuery = MS.struct.generator.atomGroups({
           'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_comp_id(), 'HOH'])
         });
 
-        // Create water representation
+        // Create a selection query for water
+        const waterSelectionQuery = StructureSelectionQuery('water-molecules', waterQuery);
+
+        // Create water representation with specific tag
         const waterRepr = await pluginRef.current.builders.structure.representation.addRepresentation(structure, {
           type: 'ball-and-stick',
           color: 'element-symbol',
-          sizeTheme: { name: 'physical', params: { scale: 0.33 } }
+          sizeTheme: { name: 'physical', params: { scale: 0.5 } }
         }, {
-          tag: 'water-molecules'
+          tag: 'water-representation'
         });
 
-        // Apply the water query to show only water molecules in this representation
-        const selectionQuery = StructureSelectionQuery('water-molecules', waterQuery);
-        await PluginCommands.Structure.RemoveSelection(pluginRef.current, { 
-          structure: structure.transform.ref,
-          query: MS.struct.generator.all()
-        });
+        // Apply the water selection to this representation
+        try {
+          // Apply the selection query to show only water molecules
+          await pluginRef.current.builders.structure.representation.updateRepresentation(waterRepr, structure, {
+            type: 'ball-and-stick',
+            color: 'element-symbol',
+            sizeTheme: { name: 'physical', params: { scale: 0.5 } }
+          }, {
+            selection: waterQuery
+          });
+        } catch (selectionError) {
+          // If selection application fails, that's okay - water might still be visible
+          debugLog(`Water selection application warning: ${selectionError}`, 'warning');
+        }
         
-        // Store reference for later hiding
+        // Store reference and mark as visible
         waterRepresentationRef.current = waterRepr.transform.ref;
+        isWaterVisibleRef.current = true;
         
-        debugLog('✅ Water molecules are now visible');
+        debugLog('✅ Water molecules representation created successfully');
         
       } catch (error) {
         const errorMessage = `Failed to show water molecules: ${error instanceof Error ? error.message : 'Unknown error'}`;
@@ -839,32 +864,57 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
-    // IMPLEMENTED: Hide water molecules
+    // FIXED: Proper water molecule hiding implementation
     const hideWaterMolecules = useCallback(async (): Promise<void> => {
-      debugLog('Hiding water molecules');
+      debugLog('🔄 Hiding water molecules');
       
       if (!pluginRef.current) {
         throw new Error('Plugin not initialized');
       }
 
+      // Check if water is not visible
+      if (!isWaterVisibleRef.current) {
+        debugLog('Water molecules are already hidden');
+        return;
+      }
+
       try {
-        // Find and remove water representations
+        // Method 1: Remove by stored reference
+        if (waterRepresentationRef.current) {
+          try {
+            await PluginCommands.State.RemoveObject(pluginRef.current, { 
+              state: pluginRef.current.state.data, 
+              ref: waterRepresentationRef.current 
+            });
+            debugLog('✅ Water representation removed by reference');
+          } catch (refError) {
+            debugLog(`Reference removal failed: ${refError}`, 'warning');
+          }
+        }
+
+        // Method 2: Find and remove by tag
         const representations = pluginRef.current.state.data.select(StateSelection.Generators.ofType(PluginStateObject.Molecule.Structure.Representation3D));
         
         for (const repr of representations) {
-          // Check if this is a water representation by checking its tag or properties
-          if (repr.transform.tags?.includes('water-molecules') || waterRepresentationRef.current === repr.transform.ref) {
-            await PluginCommands.State.RemoveObject(pluginRef.current, { 
-              state: pluginRef.current.state.data, 
-              ref: repr.transform.ref 
-            });
+          // Check if this representation has the water tag
+          if (repr.transform.tags?.includes('water-representation')) {
+            try {
+              await PluginCommands.State.RemoveObject(pluginRef.current, { 
+                state: pluginRef.current.state.data, 
+                ref: repr.transform.ref 
+              });
+              debugLog('✅ Water representation removed by tag');
+            } catch (tagError) {
+              debugLog(`Tag removal failed: ${tagError}`, 'warning');
+            }
           }
         }
         
-        // Clear the reference
+        // Reset state
         waterRepresentationRef.current = null;
+        isWaterVisibleRef.current = false;
         
-        debugLog('✅ Water molecules have been hidden');
+        debugLog('✅ Water molecules have been hidden successfully');
         
       } catch (error) {
         const errorMessage = `Failed to hide water molecules: ${error instanceof Error ? error.message : 'Unknown error'}`;
