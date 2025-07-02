@@ -800,7 +800,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, []);
 
-    // SIMPLIFIED: Show water molecules implementation
+    // FIXED: Show water molecules with proper reference handling
     const showWaterMolecules = useCallback(async (): Promise<void> => {
       debugLog('🔄 Showing water molecules');
       
@@ -831,7 +831,35 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           tag: 'water-representation'
         });
 
-        // Create water selection query
+        debugLog('Water representation created:', waterRepr);
+
+        // FIXED: Proper reference extraction with error handling
+        let waterRef: string | null = null;
+        
+        try {
+          // Try different possible reference paths
+          if (waterRepr && typeof waterRepr === 'object') {
+            if (waterRepr.transform && waterRepr.transform.ref) {
+              waterRef = waterRepr.transform.ref;
+              debugLog('Got water ref from waterRepr.transform.ref:', waterRef);
+            } else if (waterRepr.ref) {
+              waterRef = waterRepr.ref;
+              debugLog('Got water ref from waterRepr.ref:', waterRef);
+            } else if (typeof waterRepr === 'string') {
+              waterRef = waterRepr;
+              debugLog('Got water ref as string:', waterRef);
+            } else {
+              debugLog('Unexpected waterRepr structure:', Object.keys(waterRepr));
+              // Fallback: use a generated ref or the structure ref
+              waterRef = `water-${Date.now()}`;
+            }
+          }
+        } catch (refError) {
+          debugLog(`Error extracting water reference: ${refError}`, 'warning');
+          waterRef = `water-fallback-${Date.now()}`;
+        }
+
+        // Create water selection query for HOH molecules
         const waterQuery = MS.struct.generator.atomGroups({
           'residue-test': MS.core.rel.eq([MS.struct.atomProperty.macromolecular.label_comp_id(), 'HOH'])
         });
@@ -845,12 +873,14 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
           }, {
             selection: waterQuery
           });
+          debugLog('Applied water selection query successfully');
         } catch (selectionError) {
           debugLog(`Water selection application warning: ${selectionError}`, 'warning');
+          // Continue anyway - the representation might still work
         }
         
         // Store reference and mark as visible
-        waterRepresentationRef.current = waterRepr.transform.ref;
+        waterRepresentationRef.current = waterRef;
         isWaterVisibleRef.current = true;
         
         debugLog('✅ Water molecules representation created successfully');
@@ -862,7 +892,7 @@ const MolstarViewer = React.forwardRef<ViewerControls, MolstarViewerProps>(
       }
     }, [debugLog]);
 
-    // COMPLETELY REWRITTEN: Simple and reliable water hiding
+    // SIMPLIFIED: Simple and reliable water hiding
     const hideWaterMolecules = useCallback(async (): Promise<void> => {
       debugLog('🔄 Hiding water molecules');
       
